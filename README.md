@@ -86,15 +86,31 @@ De stationsletter/network drive is een normale SMB-mapweergave, geen USB-blokapp
 
 ## Container Manager zonder SSH-bouw
 
-Als de image al op GHCR staat, kun je in Container Manager een project maken met `compose.yaml` en een `.env` naast het projectbestand. De hostvoorbereiding met `prepare-host.sh` blijft nog steeds nodig; een Compose-project kan de host-mount niet zelf `shared` maken.
+Als de image al op GHCR of Docker Hub staat, kun je in Container Manager een project maken met `compose.yaml` en een `.env` naast het projectbestand. De hostvoorbereiding met `prepare-host.sh` blijft nog steeds nodig; een Compose-project kan de host-mount niet zelf `shared` maken.
 
-Image:
+Standaardimage (GitHub Container Registry):
 
 ```text
 ghcr.io/yuliankanters2011-tech/dvd:latest
 ```
 
+Voor Docker Hub stel je in `.env` in:
+
+```env
+IMAGE_NAME=docker.io/<jouw-dockerhub-gebruikersnaam>/dvd-bridge
+IMAGE_TAG=latest
+```
+
 De GitHub Actions-workflow bouwt voor `linux/amd64` en `linux/arm64` en publiceert bij pushes naar de standaardbranch/tags. Op een featurebranch kun je altijd lokaal bouwen met `--build`.
+
+### Publiceren naar Docker Hub
+
+Zie [docs/dockerhub.md](docs/dockerhub.md). Kort gezegd:
+
+1. Maak een Docker Hub-repository `dvd-bridge`.
+2. Maak een Docker Hub access token.
+3. Zet in GitHub bij **Settings → Secrets and variables → Actions** twee repository secrets: `DOCKERHUB_USERNAME` en `DOCKERHUB_TOKEN`.
+4. De workflow **Publish to Docker Hub** publiceert daarna naar `docker.io/<gebruikersnaam>/dvd-bridge:latest` bij een push naar `main`, een versietag, of handmatig via **Actions → Run workflow**.
 
 ## Instellingen
 
@@ -110,7 +126,8 @@ De GitHub Actions-workflow bouwt voor `linux/amd64` en `linux/arm64` en publicee
 | `POLL_SECONDS` | `5` | Interval voor schijfdetectie |
 | `COPY_FILES` | `false` | Nieuwe schijven automatisch kopiëren naar `library` |
 | `AUTO_EJECT` | `false` | Uitwerpen na geslaagde automatische kopie |
-| `IMAGE_TAG` | `latest` | GHCR-tag |
+| `IMAGE_NAME` | `ghcr.io/yuliankanters2011-tech/dvd` | Image-repository, bijvoorbeeld `docker.io/<user>/dvd-bridge` |
+| `IMAGE_TAG` | `latest` | Imagetag |
 
 Voorbeeld automatisch kopiëren:
 

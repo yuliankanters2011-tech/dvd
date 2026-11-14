@@ -28,8 +28,10 @@ jobs:
         run: python -m pytest
       - name: Lint shell scripts
         run: shellcheck scripts/*.sh
-      - name: Validate Compose file
-        run: docker compose config --quiet
+      - name: Validate Compose files
+        run: |
+          docker compose -f compose.yaml config --quiet
+          docker compose -f docker-compose.yml config --quiet
       - name: Build smoke-test image
         run: docker build -t dvd-bridge:smoke .
       - name: Smoke-test dashboard without a drive
