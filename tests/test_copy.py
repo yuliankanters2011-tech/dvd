@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from app.copy import MARKER, CopyError, import_disc, tree_size
+from app.copy import MARKER, CopyCancelledError, CopyError, import_disc, tree_size
 from app.drive import DiscInfo, safe_disc_name
 
 
@@ -62,6 +62,6 @@ def test_stop_removes_staging(tmp_path):
     library = tmp_path / "library"
     stop = threading.Event()
     stop.set()
-    with pytest.raises(CopyError, match="afgebroken"):
+    with pytest.raises(CopyCancelledError, match="geannuleerd"):
         import_disc(source, library, info(), os.getuid(), os.getgid(), stop)
     assert list(library.iterdir()) == []

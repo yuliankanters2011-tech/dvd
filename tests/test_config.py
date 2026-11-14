@@ -14,12 +14,14 @@ def test_defaults(monkeypatch):
         "PGID",
         "COPY_FILES",
         "AUTO_EJECT",
+        "ISO_MAX_MISSING_PERCENT",
     ):
         monkeypatch.delenv(key, raising=False)
     cfg = Config.from_env()
     assert cfg.device.as_posix() == "/dev/sr0"
     assert cfg.mountpoint.as_posix() == "/srv/dvd/disc"
     assert cfg.copy_files is False
+    assert cfg.iso_max_missing_percent == 0.5
 
 
 def test_boolean_and_numbers(monkeypatch):
@@ -109,6 +111,22 @@ def test_converter_env(monkeypatch, tmp_path):
 )
 def test_converter_invalid(monkeypatch, key, value):
     monkeypatch.setenv(key, value)
+    with pytest.raises(ConfigError):
+        Config.from_env()
+
+
+def test_iso_tolerance_env(monkeypatch):
+    monkeypatch.setenv("ISO_MAX_MISSING_PERCENT", "1.25")
+    assert Config.from_env().iso_max_missing_percent == 1.25
+    monkeypatch.setenv("ISO_MAX_MISSING_PERCENT", "0")
+    assert Config.from_env().iso_max_missing_percent == 0
+    monkeypatch.setenv("ISO_MAX_MISSING_PERCENT", "100")
+    assert Config.from_env().iso_max_missing_percent == 100
+
+
+@pytest.mark.parametrize("value", ["-0.1", "100.1", "nan", "inf", "abc", ""])
+def test_iso_tolerance_invalid(monkeypatch, value):
+    monkeypatch.setenv("ISO_MAX_MISSING_PERCENT", value)
     with pytest.raises(ConfigError):
         Config.from_env()
 

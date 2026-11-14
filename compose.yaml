@@ -25,6 +25,7 @@ services:
       PGID: ${PGID:-100}
       COPY_FILES: ${COPY_FILES:-false}
       AUTO_EJECT: ${AUTO_EJECT:-false}
+      ISO_MAX_MISSING_PERCENT: ${ISO_MAX_MISSING_PERCENT:-0.5}
       FILMS_DIR: /volume1/video/Films
       MUSIC_DIR: /volume1/video/Muziek
       CONVERT_THREADS: ${CONVERT_THREADS:-2}

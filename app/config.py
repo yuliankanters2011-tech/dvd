@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -31,6 +32,16 @@ def integer(name: str, default: int, minimum: int, maximum: int) -> int:
     return value
 
 
+def percentage(name: str, default: float, minimum: float = 0, maximum: float = 100) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except ValueError as exc:
+        raise ConfigError(f"{name} moet een getal zijn") from exc
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        raise ConfigError(f"{name} moet tussen {minimum} en {maximum} liggen")
+    return value
+
+
 @dataclass(frozen=True)
 class Config:
     device: Path = Path("/dev/sr0")
@@ -42,6 +53,7 @@ class Config:
     pgid: int = 100
     copy_files: bool = False
     auto_eject: bool = False
+    iso_max_missing_percent: float = 0.5
     films_dir: Path = Path("/volume1/video/Films")
     music_dir: Path = Path("/volume1/video/Muziek")
     convert_threads: int = 2
@@ -97,6 +109,7 @@ class Config:
             pgid=pgid,
             copy_files=boolean("COPY_FILES"),
             auto_eject=boolean("AUTO_EJECT"),
+            iso_max_missing_percent=percentage("ISO_MAX_MISSING_PERCENT", 0.5),
             films_dir=films,
             music_dir=music,
             convert_threads=integer("CONVERT_THREADS", 2, 1, 16),

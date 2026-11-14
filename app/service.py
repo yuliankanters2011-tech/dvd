@@ -20,6 +20,12 @@ LOG = logging.getLogger("dvd.service")
 
 
 @dataclass(frozen=True)
+class ImageJob:
+    force: bool = False
+    identity: str = ""
+
+
+@dataclass(frozen=True)
 class ConvertJob:
     source_id: str
     title: int
@@ -55,9 +61,20 @@ class Snapshot:
     copied_bytes: int = 0
     total_bytes: int = 0
     import_folder: str = ""
+    copy_error: str = ""
+    copy_cancel_requested: bool = False
     image_state: str = "idle"
     image_percent: int = 0
     image_file: str = ""
+    image_error: str = ""
+    image_missing_bytes: int = 0
+    image_expected_bytes: int = 0
+    image_rescued_bytes: int = 0
+    image_complete: bool = True
+    image_forced: bool = False
+    image_force_available: bool = False
+    image_resumable: bool = False
+    image_cancel_requested: bool = False
     convert_state: str = "idle"
     convert_percent: int = 0
     convert_speed: float = 0.0
@@ -77,7 +94,7 @@ class Service:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.stop = threading.Event()
-        self.commands: queue.Queue[str | ConvertJob] = queue.Queue(maxsize=8)
+        self.commands: queue.Queue[str | ConvertJob | ImageJob] = queue.Queue(maxsize=8)
         self._lock = threading.Lock()
         self._snapshot = Snapshot(
             device=str(config.device),
@@ -93,7 +110,11 @@ class Service:
         self._copy_done = False
         self._retry_at = 0.0
         self._convert_stop = threading.Event()
+        self._image_stop = threading.Event()
+        self._copy_stop = threading.Event()
         self._conversion_pending = False
+        self._image_pending = False
+        self._copy_pending = False
         self._job_lock = threading.Lock()
         self._worker = threading.Thread(target=self._run, name="dvd-worker", daemon=True)
 
@@ -128,15 +149,77 @@ class Service:
                     raise RuntimeError("Er is geen conversie om te annuleren")
                 self._convert_stop.set()
             return
-        if command not in {"eject", "close", "copy", "iso", "retry"}:
+        if command == "cancel_iso":
+            with self._job_lock:
+                current = self.snapshot()
+                if self._image_pending or current["image_state"] == "working":
+                    self._image_stop.set()
+                    self.update(image_cancel_requested=True)
+                    return
+                if current["image_state"] == "error" and current["image_force_available"]:
+                    self.update(
+                        image_state="cancelled",
+                        image_force_available=False,
+                        image_cancel_requested=False,
+                        image_error="",
+                        image_resumable=True,
+                        error="",
+                        state="ready",
+                        message=(
+                            "ISO niet opgeslagen. Het deelresultaat is bewaard; "
+                            "klik op ISO maken om later te hervatten."
+                        ),
+                    )
+                    return
+                raise RuntimeError("Er is geen ISO-bewerking om te annuleren")
+        if command == "cancel_copy":
+            with self._job_lock:
+                if not self._copy_pending and self.snapshot()["copy_state"] != "copying":
+                    raise RuntimeError("Er is geen kopieerbewerking om te annuleren")
+                self._copy_stop.set()
+                self.update(copy_cancel_requested=True)
+            return
+        if command not in {"eject", "close", "copy", "iso", "iso_force", "retry"}:
             raise ValueError("Onbekende opdracht")
         with self._job_lock:
-            if self._conversion_pending or self.snapshot()["convert_state"] == "working":
+            current = self.snapshot()
+            if self._conversion_pending or current["convert_state"] == "working":
                 raise RuntimeError("Wacht tot het omzetten klaar is of annuleer de conversie")
+            if command == "iso_force":
+                if (
+                    self._image_pending
+                    or current["image_state"] != "error"
+                    or not current["image_force_available"]
+                    or not self._mounted
+                    or self._disc is None
+                ):
+                    raise RuntimeError("Er is geen beschadigde ISO om bewust door te zetten")
+                if current["image_cancel_requested"]:
+                    raise RuntimeError("De ISO-bewerking wordt al geannuleerd")
+                job: str | ConvertJob | ImageJob = ImageJob(
+                    force=True, identity=self._disc.identity
+                )
+                self._image_stop.clear()
+            elif command == "iso":
+                if self._image_pending or current["image_state"] == "working":
+                    raise RuntimeError("Er wordt al een ISO gemaakt")
+                job = ImageJob()
+                self._image_stop.clear()
+            elif command == "copy":
+                if self._copy_pending or current["copy_state"] == "copying":
+                    raise RuntimeError("Er wordt al gekopieerd")
+                job = command
+                self._copy_stop.clear()
+            else:
+                job = command
             try:
-                self.commands.put_nowait(command)
+                self.commands.put_nowait(job)
             except queue.Full as exc:
                 raise RuntimeError("Er staan al te veel opdrachten in de wachtrij") from exc
+            if isinstance(job, ImageJob):
+                self._image_pending = True
+            elif job == "copy":
+                self._copy_pending = True
 
     def request_conversion(
         self, source_id: str, title: int, mode: str, destination: str, name: str = ""
@@ -247,6 +330,8 @@ class Service:
     def shutdown(self) -> None:
         self.stop.set()
         self._convert_stop.set()
+        self._image_stop.set()
+        self._copy_stop.set()
         self._worker.join(timeout=25)
         # The worker normally unmounts itself. This fallback is limited to the
         # single mountpoint owned by this service, never the host volume.
@@ -282,9 +367,20 @@ class Service:
             copied_bytes=0,
             total_bytes=0,
             import_folder="",
+            copy_error="",
+            copy_cancel_requested=False,
             image_state="idle",
             image_percent=0,
             image_file="",
+            image_error="",
+            image_missing_bytes=0,
+            image_expected_bytes=0,
+            image_rescued_bytes=0,
+            image_complete=True,
+            image_forced=False,
+            image_force_available=False,
+            image_resumable=False,
+            image_cancel_requested=False,
         )
 
     def _mount(self) -> None:
@@ -326,8 +422,12 @@ class Service:
         self.update(
             copy_state="copying",
             copy_percent=0,
+            copy_error="",
+            copy_cancel_requested=False,
             message="Bestanden naar de NAS kopiëren…",
         )
+        if self._copy_stop.is_set():
+            raise copy.CopyCancelledError("Kopiëren geannuleerd")
 
         def progress(done: int, total: int, files: int) -> None:
             self.update(
@@ -342,7 +442,7 @@ class Service:
             self._disc,
             self.config.puid,
             self.config.pgid,
-            self.stop,
+            self._copy_stop,
             progress,
         )
         self._copy_done = True
@@ -358,7 +458,8 @@ class Service:
         if self.config.auto_eject:
             self._eject()
 
-    def _iso(self) -> None:
+    def _iso(self, job: ImageJob | None = None) -> None:
+        job = job or ImageJob()
         self._ensure_not_converting()
         if not self._mounted or self._disc is None:
             raise image.ImageError("Plaats eerst een leesbare schijf")
@@ -367,29 +468,75 @@ class Service:
         ):
             self._clear_disc("empty", "De schijf is verwijderd. Plaats een cd/dvd.")
             raise image.ImageError("De schijf is tijdens de opdracht verwijderd")
+        if job.force and job.identity != self._disc.identity:
+            raise image.ImageError(
+                "De schijf is veranderd. Maak eerst opnieuw een ISO; "
+                "de doorgaan-keuze geldt alleen voor de oorspronkelijke schijf."
+            )
         self.update(
             image_state="working",
             image_percent=0,
-            message="ISO-bestand maken. Dit kan even duren…",
+            image_file="",
+            image_error="",
+            image_missing_bytes=0,
+            image_expected_bytes=self._disc.size_bytes,
+            image_rescued_bytes=0,
+            image_complete=True,
+            image_forced=False,
+            image_force_available=False,
+            image_resumable=False,
+            image_cancel_requested=False,
+            error="",
+            message=(
+                "Beschadigde ISO bewust opslaan…"
+                if job.force
+                else "ISO-bestand maken. Dit kan even duren…"
+            ),
         )
+        if self._image_stop.is_set():
+            raise image.ImageCancelledError("ISO maken geannuleerd")
 
         def progress(done: int, total: int) -> None:
-            self.update(image_percent=min(100, round(done * 100 / total)) if total else 0)
+            self.update(
+                image_percent=min(100, round(done * 100 / total)) if total else 0,
+                image_rescued_bytes=done,
+                image_expected_bytes=total,
+            )
 
         result = image.create_iso(
             self.config.device,
             self.config.library_dir,
             self.config.state_dir,
             self._disc,
-            self.stop,
+            self._image_stop,
             progress,
+            max_missing_percent=self.config.iso_max_missing_percent,
+            force=job.force,
         )
+        if result.complete:
+            message = "ISO klaar. Koppel het bestand aan in File Station."
+        else:
+            message = (
+                f"Beschadigde ISO opgeslagen: {result.missing_bytes} bytes onleesbaar "
+                f"({result.missing_bytes * 100 / result.expected_bytes:.2f}%). "
+                "Het bestand en de .json-markering vertellen dat de ISO niet volledig is."
+            )
         self.update(
             image_state="done",
             image_percent=100,
             image_file=str(result.path),
+            image_error="",
+            image_missing_bytes=result.missing_bytes,
+            image_expected_bytes=result.expected_bytes,
+            image_rescued_bytes=result.expected_bytes - result.missing_bytes,
+            image_complete=result.complete,
+            image_forced=result.forced,
+            image_force_available=False,
+            image_resumable=False,
+            image_cancel_requested=False,
             state="ready",
-            message="ISO klaar. Koppel het bestand aan in File Station.",
+            error="",
+            message=message,
         )
 
     def _convert(self, job: ConvertJob) -> None:
@@ -497,10 +644,12 @@ class Service:
         drive.close_tray(self.config.device)
         self.update(state="not_ready", message="Lade sluiten; de schijf wordt gelezen…", error="")
 
-    def _command(self, command: str | ConvertJob) -> None:
+    def _command(self, command: str | ConvertJob | ImageJob) -> None:
         try:
             if isinstance(command, ConvertJob):
                 self._convert(command)
+            elif isinstance(command, ImageJob):
+                self._iso(command)
             elif command == "eject":
                 self._eject()
             elif command == "close":
@@ -513,6 +662,44 @@ class Service:
                 self._retry_at = 0
                 if not self._mounted:
                     self._mount()
+        except image.ImageIncompleteError as exc:
+            LOG.warning("%s", exc)
+            self.update(
+                image_state="error",
+                image_error=str(exc),
+                image_missing_bytes=exc.missing_bytes,
+                image_expected_bytes=exc.expected_bytes,
+                image_rescued_bytes=exc.rescued_bytes,
+                image_force_available=True,
+                image_resumable=True,
+                image_complete=False,
+                state="ready",
+                error="",
+                message=(
+                    "De schijf is sterk beschadigd. Kies 'Toch doorgaan' om de "
+                    "beschadigde ISO bewust op te slaan, of annuleer het opslaan."
+                ),
+            )
+        except image.ImageCancelledError as exc:
+            self.update(
+                image_state="cancelled",
+                image_error="",
+                image_force_available=False,
+                image_resumable=exc.resumable,
+                image_cancel_requested=False,
+                state="ready",
+                error="",
+                message=str(exc),
+            )
+        except copy.CopyCancelledError as exc:
+            self.update(
+                copy_state="cancelled",
+                copy_error="",
+                copy_cancel_requested=False,
+                state="ready",
+                error="",
+                message=str(exc),
+            )
         except (
             drive.DriveError,
             copy.CopyError,
@@ -523,10 +710,17 @@ class Service:
             RuntimeError,
         ) as exc:
             current = self.snapshot()
-            if current["copy_state"] == "copying":
-                self.update(copy_state="error")
-            if current["image_state"] == "working":
-                self.update(image_state="error")
+            if isinstance(command, ImageJob) or command == "iso":
+                self.update(
+                    image_state="error",
+                    image_error=str(exc),
+                    image_force_available=False,
+                    image_cancel_requested=False,
+                )
+            elif current["image_state"] == "working":
+                self.update(image_state="error", image_error=str(exc))
+            if command == "copy" or current["copy_state"] == "copying":
+                self.update(copy_state="error", copy_error=str(exc), copy_cancel_requested=False)
             if current["convert_state"] == "working":
                 self.update(convert_state="error", convert_error=str(exc))
             self._error(str(exc))
@@ -534,6 +728,12 @@ class Service:
             if isinstance(command, ConvertJob):
                 with self._job_lock:
                     self._conversion_pending = False
+            elif isinstance(command, ImageJob) or command == "iso":
+                with self._job_lock:
+                    self._image_pending = False
+            elif command == "copy":
+                with self._job_lock:
+                    self._copy_pending = False
 
     def _run(self) -> None:
         cfg = self.config
@@ -611,12 +811,23 @@ class Service:
                         state="not_ready",
                         message="Schijf extern losgekoppeld; opnieuw aankoppelen…",
                     )
+            except copy.CopyCancelledError as exc:
+                self.update(
+                    copy_state="cancelled",
+                    copy_error="",
+                    copy_cancel_requested=False,
+                    state="ready",
+                    error="",
+                    message=str(exc),
+                )
             except (drive.DriveError, copy.CopyError, image.ImageError, OSError) as exc:
                 current = self.snapshot()
                 if current["copy_state"] == "copying":
-                    self.update(copy_state="error")
+                    self.update(
+                        copy_state="error", copy_error=str(exc), copy_cancel_requested=False
+                    )
                 if current["image_state"] == "working":
-                    self.update(image_state="error")
+                    self.update(image_state="error", image_error=str(exc))
                 self._error(str(exc))
             self.stop.wait(cfg.poll_seconds)
         try:

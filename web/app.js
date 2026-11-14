@@ -150,7 +150,10 @@ function render(data) {
   const badge = $("state-badge");
   badge.textContent = working ? "Bezig" : label;
   badge.className = `badge ${working ? "working" : kind}`;
-  $("status-title").textContent = converting ? "Omzetten naar MP4" : titleLabels[data.state] || "DVD Bridge";
+  $("status-title").textContent = converting ? "Omzetten naar MP4"
+    : data.image_state === "working" ? "ISO maken"
+      : data.copy_state === "copying" ? "Bestanden kopiëren"
+        : titleLabels[data.state] || "DVD Bridge";
   $("status-message").textContent = data.message || "";
   $("disc-label").textContent = data.disc?.label || "—";
   $("disc-format").textContent = data.disc?.filesystem ? data.disc.filesystem.toUpperCase() : "—";
@@ -163,21 +166,73 @@ function render(data) {
 
   const ready = data.state === "ready";
   $("copy-button").disabled = busy || working || !ready || data.copy_state === "done";
-  $("iso-button").disabled = busy || working || !ready;
+  $("iso-button").disabled = busy || working || !ready || data.image_force_available;
+  $("iso-button").textContent = data.image_resumable && !data.image_force_available ? "ISO hervatten" : "ISO maken";
   $("close-button").disabled = busy || working || !["empty", "open", "error"].includes(data.state);
   $("eject-button").disabled = busy || working || !["ready", "empty", "open", "error"].includes(data.state);
   $("retry-button").classList.toggle("hidden", data.state !== "error");
   $("retry-button").disabled = busy || working;
 
-  const showCopy = ["copying", "done", "error"].includes(data.copy_state);
+  const copying = data.copy_state === "copying";
+  const showCopy = ["copying", "done", "error", "cancelled"].includes(data.copy_state);
   $("copy-progress").classList.toggle("hidden", !showCopy);
   $("copy-bar").value = data.copy_percent || 0;
   $("copy-percent").textContent = `${data.copy_percent || 0}%`;
-  $("copy-label").textContent = data.copy_state === "done" ? "Kopiëren klaar" : data.copy_state === "error" ? "Kopiëren mislukt" : `Kopiëren · ${bytes(data.copied_bytes)} / ${bytes(data.total_bytes)}`;
-  const showImage = ["working", "done", "error"].includes(data.image_state);
+  $("copy-label").textContent = data.copy_state === "done" ? "Kopiëren klaar"
+    : data.copy_state === "error" ? "Kopiëren mislukt"
+      : data.copy_state === "cancelled" ? "Kopiëren geannuleerd"
+        : `Kopiëren · ${bytes(data.copied_bytes)} / ${bytes(data.total_bytes)}`;
+  $("cancel-copy").classList.toggle("hidden", !copying);
+  $("cancel-copy").disabled = busy || data.copy_cancel_requested;
+  $("cancel-copy").textContent = data.copy_cancel_requested ? "Annuleren aangevraagd…" : "Kopiëren annuleren";
+  const copyFeedback = $("copy-feedback");
+  copyFeedback.className = "action-feedback";
+  copyFeedback.textContent = "";
+  if (data.copy_state === "error") {
+    copyFeedback.classList.add("error");
+    copyFeedback.textContent = data.copy_error || data.error || "Kopiëren mislukt.";
+  } else if (data.copy_state === "cancelled") {
+    copyFeedback.textContent = data.message || "Geannuleerd. Bestaande imports zijn niet geraakt.";
+  }
+
+  const imaging = data.image_state === "working";
+  const showImage = ["working", "done", "error", "cancelled"].includes(data.image_state);
   $("image-progress").classList.toggle("hidden", !showImage);
   $("image-bar").value = data.image_percent || 0;
   $("image-percent").textContent = `${data.image_percent || 0}%`;
+  $("image-label").textContent = data.image_state === "done"
+    ? (data.image_complete === false ? "Beschadigde ISO opgeslagen" : "ISO klaar")
+    : data.image_state === "error" ? "ISO maken gepauzeerd"
+      : data.image_state === "cancelled" ? "ISO niet opgeslagen"
+        : "ISO maken…";
+  $("cancel-iso").classList.toggle("hidden", !imaging && !data.image_force_available);
+  $("cancel-iso").disabled = busy || data.image_cancel_requested;
+  $("cancel-iso").textContent = data.image_force_available ? "Niet opslaan"
+    : data.image_cancel_requested ? "Annuleren aangevraagd…" : "ISO annuleren";
+  $("force-iso").classList.toggle("hidden", !data.image_force_available);
+  $("force-iso").disabled = busy || working || !ready;
+  const imageFeedback = $("image-feedback");
+  imageFeedback.className = "action-feedback";
+  imageFeedback.textContent = "";
+  if (data.image_state === "error") {
+    imageFeedback.classList.add(data.image_force_available ? "warning" : "error");
+    imageFeedback.textContent = data.image_error || data.error || "ISO maken mislukt.";
+  } else if (data.image_state === "cancelled") {
+    imageFeedback.textContent = data.image_resumable
+      ? "Het deelresultaat is bewaard. Klik op ISO hervatten om later verder te gaan."
+      : data.message || "ISO maken geannuleerd.";
+  } else if (data.image_state === "done") {
+    imageFeedback.textContent = data.image_file ? `Klaar: ${data.image_file}` : "ISO opgeslagen.";
+    if (data.image_complete === false) imageFeedback.classList.add("warning");
+  }
+  const missing = Number(data.image_missing_bytes) || 0;
+  const expected = Number(data.image_expected_bytes) || 0;
+  const damage = missing > 0 && expected > 0
+    ? `${bytes(missing)} onleesbaar van ${bytes(expected)} (${(missing * 100 / expected).toLocaleString("nl-NL", { maximumFractionDigits: 2 })}%)`
+    : "";
+  $("image-meta").textContent = data.image_state === "done" && data.image_complete === false
+    ? `Let op: beschadigde ISO${data.image_forced ? " (bewust doorgegaan)" : ""}. ${damage}. De naastgelegen .json-markering vermeldt de schade.`
+    : damage;
   renderConvert(data);
 }
 
@@ -272,6 +327,12 @@ async function startConversion() {
 
 $("copy-button").addEventListener("click", () => command("copy"));
 $("iso-button").addEventListener("click", () => command("iso", "Een ISO kopieert de hele schijf naar de NAS en kan veel ruimte kosten. Doorgaan?"));
+$("cancel-copy").addEventListener("click", () => command("cancel_copy"));
+$("cancel-iso").addEventListener("click", () => command("cancel_iso"));
+$("force-iso").addEventListener("click", () => command(
+  "iso_force",
+  "Deze schijf is sterk beschadigd. De ISO kan onvolledig zijn en bestanden kunnen beschadigd blijven. Toch doorgaan en de beschadigde ISO opslaan?",
+));
 $("close-button").addEventListener("click", () => command("close"));
 $("eject-button").addEventListener("click", () => command("eject", "De schijf eerst loskoppelen en daarna uitwerpen?"));
 $("retry-button").addEventListener("click", () => command("retry"));
