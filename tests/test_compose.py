@@ -16,10 +16,37 @@ def test_compose_security_and_propagation():
     assert service["ports"] == ["${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"]
 
 
+def test_compose_jellyfin_mounts_and_converter_env():
+    for filename in ("compose.yaml", "docker-compose.yml"):
+        data = yaml.safe_load((ROOT / filename).read_text())
+        svc = data["services"]["dvd"]
+        env = svc["environment"]
+        assert env["FILMS_DIR"] == "/volume1/video/Films"
+        assert env["MUSIC_DIR"] == "/volume1/video/Muziek"
+        assert env["CONVERT_THREADS"] == "${CONVERT_THREADS:-2}"
+        assert env["CONVERT_CRF"] == "${CONVERT_CRF:-20}"
+        assert env["CONVERT_PRESET"] == "${CONVERT_PRESET:-veryfast}"
+        assert env["CONVERT_AUDIO_BITRATE"] == "${CONVERT_AUDIO_BITRATE:-192}"
+        films = next(
+            v
+            for v in svc["volumes"]
+            if isinstance(v, dict) and v["target"] == "/volume1/video/Films"
+        )
+        music = next(
+            v
+            for v in svc["volumes"]
+            if isinstance(v, dict) and v["target"] == "/volume1/video/Muziek"
+        )
+        assert films["source"] == "${FILMS_PATH:-/volume1/video/Films}"
+        assert music["source"] == "${MUSIC_PATH:-/volume1/video/Muziek}"
+        assert films.get("read_only") is not True
+        assert music.get("read_only") is not True
+
+
 def test_dockerfile_workdir_and_packages():
     text = (ROOT / "Dockerfile").read_text()
     assert "WORKDIR /opt/dvd-bridge" in text
-    assert "python3 util-linux ddrescue" in text
+    assert "python3 util-linux ddrescue ffmpeg" in text
     assert 'CMD ["python3", "-m", "app.main"]' in text
 
 

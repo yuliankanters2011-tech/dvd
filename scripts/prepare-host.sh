@@ -8,6 +8,7 @@ DEVICE=${DEVICE:-}
 WEB_PORT=${WEB_PORT:-8080}
 COPY_FILES=${COPY_FILES:-false}
 AUTO_EJECT=${AUTO_EJECT:-false}
+MEDIA_ROOT=${MEDIA_ROOT:-/volume1/video}
 WRITE_ENV=1
 
 usage() {
@@ -18,7 +19,8 @@ Gebruik: sudo bash scripts/prepare-host.sh [opties]
   --device APPARAAT Optische speler, bijvoorbeeld /dev/sr0 (standaard: automatisch)
   --port POORT      Webpoort (standaard 8080)
   --copy            Kopieer nieuwe schijven automatisch naar library
-  --auto-eject      Werp uit na een geslaagde automatische kopie
+  --auto-eject      Werp uit na een geslaagde automatische kopie of live-dvd-conversie
+  --media-root PAD  Jellyfin-map (standaard /volume1/video; maakt Films/Muziek)
   --no-env          Schrijf geen .env-bestand
   -h, --help        Toon deze hulp
 
@@ -34,6 +36,7 @@ while [[ $# -gt 0 ]]; do
         --port) WEB_PORT=${2:?Ontbrekende poort}; shift 2 ;;
         --copy) COPY_FILES=true; shift ;;
         --auto-eject) AUTO_EJECT=true; shift ;;
+        --media-root) MEDIA_ROOT=${2:?Ontbrekend pad}; shift 2 ;;
         --no-env) WRITE_ENV=0; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Onbekende optie: $1" >&2; usage >&2; exit 2 ;;
@@ -47,6 +50,8 @@ info() { echo "==> $*"; }
 [[ $(uname -s) == Linux ]] || fail "Deze container heeft een Linux-kernel nodig"
 [[ $SHARE_PATH =~ ^/volume[0-9]+/[A-Za-z0-9._/-]+$ ]] || fail "Gebruik een pad zoals /volume1/dvd (geen spaties of ..)"
 [[ $SHARE_PATH != *..* ]] || fail "Het pad mag geen .. bevatten"
+[[ $MEDIA_ROOT =~ ^/volume[0-9]+/[A-Za-z0-9._/-]+$ ]] || fail "Gebruik een Jellyfin-pad zoals /volume1/video"
+[[ $MEDIA_ROOT != *..* ]] || fail "Het Jellyfin-pad mag geen .. bevatten"
 if ! [[ $WEB_PORT =~ ^[0-9]+$ ]] || (( WEB_PORT < 1024 || WEB_PORT > 65535 )); then
     fail "Poort moet 1024 t/m 65535 zijn"
 fi
@@ -112,6 +117,14 @@ PGID=${SUDO_GID:-$(stat -c '%g' "$SHARE_PATH")}
 chown "$PUID:$PGID" "$SHARE_PATH/disc" "$SHARE_PATH/library"
 chmod 0755 "$SHARE_PATH/disc" "$SHARE_PATH/library"
 
+FILMS_PATH="$MEDIA_ROOT/Films"
+MUSIC_PATH="$MEDIA_ROOT/Muziek"
+mkdir -p "$FILMS_PATH" "$MUSIC_PATH"
+chown "$PUID:$PGID" "$FILMS_PATH" "$MUSIC_PATH"
+chmod 0755 "$FILMS_PATH" "$MUSIC_PATH"
+info "Jellyfin-films: $FILMS_PATH"
+info "Jellyfin-muziek: $MUSIC_PATH"
+
 if [[ $WRITE_ENV == 1 ]]; then
     ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
     ENV_FILE="$ROOT/.env"
@@ -133,6 +146,12 @@ COPY_FILES=$COPY_FILES
 AUTO_EJECT=$AUTO_EJECT
 IMAGE_NAME=${IMAGE_NAME:-ghcr.io/yuliankanters2011-tech/dvd}
 IMAGE_TAG=${IMAGE_TAG:-latest}
+FILMS_PATH=$FILMS_PATH
+MUSIC_PATH=$MUSIC_PATH
+CONVERT_THREADS=2
+CONVERT_CRF=20
+CONVERT_PRESET=veryfast
+CONVERT_AUDIO_BITRATE=192
 EOF
     chown "$PUID:$PGID" "$ENV_FILE"
     chmod 0644 "$ENV_FILE"

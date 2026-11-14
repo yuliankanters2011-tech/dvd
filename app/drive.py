@@ -17,6 +17,7 @@ LOG = logging.getLogger("dvd.drive")
 CDROM_DRIVE_STATUS = 0x5326
 CDROM_MEDIA_CHANGED = 0x5325
 CDROM_LOCKDOOR = 0x5329
+CDROMCLOSETRAY = 0x5319
 CDSL_CURRENT = 0x7FFFFFFF
 CDS_DISC_OK = 4
 
@@ -249,6 +250,25 @@ def eject(device: Path) -> None:
             f"Uitwerpen mislukt: {result.stderr.strip()}. "
             "Gebruik eventueel de fysieke knop op de speler."
         )
+
+
+def close_tray(device: Path) -> None:
+    """Close a motorised tray. Manual slimline drives may ignore this command."""
+    try:
+        fd = os.open(device, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError as exc:
+        raise DriveError(f"Kan {device} niet openen om de lade te sluiten: {exc.strerror}") from exc
+    try:
+        _ioctl(fd, CDROMCLOSETRAY, CDSL_CURRENT)
+    except OSError:
+        result = run(["eject", "-t", str(device)], timeout=20)
+        if result.returncode != 0:
+            raise DriveError(
+                "De lade kon niet automatisch worden gesloten. Duw de lade voorzichtig "
+                "dicht of gebruik de fysieke knop op de speler."
+            ) from None
+    finally:
+        os.close(fd)
 
 
 def check_tools() -> None:

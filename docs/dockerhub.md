@@ -44,7 +44,7 @@ Voeg toe:
 De workflow `.github/workflows/dockerhub.yml` publiceert:
 
 - bij een push naar `main`;
-- bij een versietag zoals `v1.0.1`;
+- bij een versietag zoals `v1.1.0`;
 - handmatig via **Actions → Publish to Docker Hub → Run workflow**.
 
 De image wordt dan:
@@ -56,12 +56,12 @@ docker.io/<DOCKERHUB_USERNAME>/dvd-bridge:latest
 Voor een versietag krijg je bijvoorbeeld ook:
 
 ```text
-docker.io/<DOCKERHUB_USERNAME>/dvd-bridge:1.0.1
+docker.io/<DOCKERHUB_USERNAME>/dvd-bridge:1.1.0
 ```
 
 ## 5. Installeren op Synology
 
-Gebruik `compose.yaml` en zet in `.env`:
+Gebruik `docker-compose.yml` (installatie zonder lokale bouw) of `compose.yaml` en zet in `.env`:
 
 ```env
 IMAGE_NAME=docker.io/<DOCKERHUB_USERNAME>/dvd-bridge
@@ -72,8 +72,21 @@ Daarna:
 
 ```bash
 sudo bash scripts/prepare-host.sh
-sudo docker compose pull
-sudo docker compose up -d
+sudo docker compose -f docker-compose.yml pull
+sudo docker compose -f docker-compose.yml up -d
 ```
 
-Of upload `compose.yaml` als project in Synology Container Manager en stel dezelfde environmentwaarden in. De hostvoorbereiding blijft nodig omdat de NAS-map `rshared` moet zijn en `/dev/sr0` beschikbaar moet zijn.
+Of upload `docker-compose.yml` als project in Synology Container Manager en stel dezelfde environmentwaarden in. De hostvoorbereiding blijft nodig omdat de NAS-map `rshared` moet zijn en `/dev/sr0` beschikbaar moet zijn.
+
+De image bevat Python 3, FFmpeg/ffprobe, util-linux en GNU ddrescue. Voor Jellyfin-conversies moeten de hostmappen `FILMS_PATH` en `MUSIC_PATH` uit `.env` bestaan en schrijfbaar zijn voor de container. `prepare-host.sh` maakt ze standaard onder `/volume1/video`.
+
+Na een update naar een image met de converter:
+
+```bash
+sudo docker compose -f docker-compose.yml pull
+sudo docker compose -f docker-compose.yml up -d
+sudo docker compose -f docker-compose.yml exec dvd ffmpeg -version
+sudo docker compose -f docker-compose.yml exec dvd ffprobe -version
+```
+
+Bestaande imports/ISO's blijven staan; de converter schrijft alleen nieuwe MP4's en markers naar de Jellyfin-mappen en overschrijft niets.

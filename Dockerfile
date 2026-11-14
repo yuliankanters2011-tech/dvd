@@ -1,13 +1,13 @@
 FROM alpine:3.22
 
 LABEL org.opencontainers.image.title="Synology DVD Bridge" \
-      org.opencontainers.image.description="Read a data CD/DVD on a Linux NAS and expose its files in a shared folder." \
+      org.opencontainers.image.description="Read a CD/DVD on a Linux NAS, share its files, and convert unprotected DVD-Video to Jellyfin MP4." \
       org.opencontainers.image.source="https://github.com/yuliankanters2011-tech/dvd" \
       org.opencontainers.image.licenses="MIT"
 
 # Alpine's util-linux is built with libmount support. Python uses only its
 # standard library; there are no pip packages or runtime downloads.
-RUN apk add --no-cache python3 util-linux ddrescue \
+RUN apk add --no-cache python3 util-linux ddrescue ffmpeg \
     && mkdir -p /media/dvd /srv/dvd /var/lib/dvd
 
 WORKDIR /opt/dvd-bridge
@@ -24,7 +24,9 @@ ENV PYTHONUNBUFFERED=1 \
     SHARE_DIR=/srv/dvd \
     STATE_DIR=/var/lib/dvd \
     POLL_SECONDS=5 \
-    WEB_PORT=8080
+    WEB_PORT=8080 \
+    FILMS_DIR=/volume1/video/Films \
+    MUSIC_DIR=/volume1/video/Muziek
 
 EXPOSE 8080
 VOLUME ["/var/lib/dvd"]

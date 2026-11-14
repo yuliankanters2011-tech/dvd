@@ -66,6 +66,19 @@ progress { width: 100%; height: 8px; border: 0; border-radius: 999px; overflow: 
 progress::-webkit-progress-bar { background: #0b1020; }
 progress::-webkit-progress-value { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 progress::-moz-progress-bar { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.converter-card { margin-top: 22px; background: linear-gradient(145deg, #14263c, #11182d); border: 1px solid var(--line); border-radius: 20px; padding: 28px; }
+.converter-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.converter-heading p:not(.eyebrow) { color: var(--muted); font-size: .9rem; line-height: 1.6; margin: 0 0 22px; }
+.converter-grid { display: grid; grid-template-columns: 2fr 1.4fr 1.2fr 1fr; gap: 14px; }
+.converter-grid label { color: var(--muted); font-size: .78rem; font-weight: 650; }
+select, input[type="text"] { display: block; width: 100%; margin-top: 8px; padding: 11px 10px; border: 1px solid #3a4a73; border-radius: 10px; background: #10172b; color: var(--text); font: inherit; font-size: .86rem; }
+select:focus-visible, input[type="text"]:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
+.converter-grid .wide { grid-column: 1 / -1; }
+.convert-path { color: #d7e1ff; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .8rem; margin: 16px 0 6px; overflow-wrap: anywhere; }
+.source-note, .converter-help, .progress-meta { color: var(--muted); font-size: .82rem; line-height: 1.6; }
+.source-note { margin: 0 0 18px; }
+.converter-help { margin: 20px 0 0; }
+.progress-meta { margin: 8px 0 0; overflow-wrap: anywhere; }
 .folder-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 22px; }
 .folder-card { display: flex; gap: 18px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
 .folder-icon { flex: 0 0 auto; width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: #7c9cff22; color: var(--accent); font-weight: 800; font-size: .8rem; }
@@ -88,6 +101,9 @@ footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 4
   .disc-label { inset: 43px; }
   .disc-hole { inset: 60px; }
   .details { grid-template-columns: repeat(2, 1fr); }
+  .converter-card { padding: 22px; }
+  .converter-heading { flex-direction: column; gap: 8px; }
+  .converter-grid { grid-template-columns: 1fr; }
   .folder-grid { grid-template-columns: 1fr; }
   footer { flex-direction: column; }
 }

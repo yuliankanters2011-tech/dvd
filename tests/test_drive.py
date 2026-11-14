@@ -83,3 +83,35 @@ def test_mount_error_hint(monkeypatch, tmp_path):
     info = drive.DiscInfo("id", "TEST", "udf", 100)
     with pytest.raises(drive.DriveError, match="SYS_ADMIN"):
         drive.mount_disc(Path("/dev/sr0"), tmp_path / "disc", info, 1024, 100)
+
+
+def test_close_tray_ioctl(monkeypatch):
+    calls = []
+    monkeypatch.setattr(drive.os, "open", lambda *a: 7)
+    monkeypatch.setattr(drive.os, "close", lambda fd: None)
+    monkeypatch.setattr(drive, "_ioctl", lambda fd, req, arg: calls.append(req) or 0)
+    drive.close_tray(Path("/dev/sr0"))
+    assert calls == [drive.CDROMCLOSETRAY]
+
+
+def test_close_tray_fallback(monkeypatch):
+    monkeypatch.setattr(drive.os, "open", lambda *a: 7)
+    monkeypatch.setattr(drive.os, "close", lambda fd: None)
+
+    def deny(*a):
+        raise OSError(errno.ENOTTY, "no ioctl")
+
+    monkeypatch.setattr(drive, "_ioctl", deny)
+    calls = []
+    monkeypatch.setattr(drive, "run", lambda args, timeout=20: calls.append(args) or completed())
+    drive.close_tray(Path("/dev/sr0"))
+    assert calls == [["eject", "-t", "/dev/sr0"]]
+
+
+def test_close_tray_failure_is_actionable(monkeypatch):
+    monkeypatch.setattr(drive.os, "open", lambda *a: 7)
+    monkeypatch.setattr(drive.os, "close", lambda fd: None)
+    monkeypatch.setattr(drive, "_ioctl", lambda *a: (_ for _ in ()).throw(OSError("deny")))
+    monkeypatch.setattr(drive, "run", lambda *a, **k: completed("", "failed", 1))
+    with pytest.raises(drive.DriveError, match="fysieke knop"):
+        drive.close_tray(Path("/dev/sr0"))
