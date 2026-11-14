@@ -1,0 +1,13 @@
+.env
+.env.backup.*
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+disc/
+library/
+*.iso
+*.mapfile
+*.log
+.DS_Store
