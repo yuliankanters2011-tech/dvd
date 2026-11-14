@@ -1,0 +1,48 @@
+name: dvd-bridge
+
+services:
+  dvd:
+    image: ghcr.io/yuliankanters2011-tech/dvd:${IMAGE_TAG:-latest}
+    build:
+      context: .
+    container_name: dvd-bridge
+    restart: unless-stopped
+    init: true
+    # Needed to mount the disc. NOT privileged, no host network, no host root.
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    devices:
+      - "${DEVICE:-/dev/sr0}:/dev/sr0:r"
+    environment:
+      DEVICE: /dev/sr0
+      SHARE_DIR: /srv/dvd
+      STATE_DIR: /var/lib/dvd
+      POLL_SECONDS: ${POLL_SECONDS:-5}
+      WEB_PORT: 8080
+      PUID: ${PUID:-1024}
+      PGID: ${PGID:-100}
+      COPY_FILES: ${COPY_FILES:-false}
+      AUTO_EJECT: ${AUTO_EJECT:-false}
+    ports:
+      # For local-network use only. Do not forward this port on your router.
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+    volumes:
+      # prepare-host.sh makes this dedicated host directory shared.
+      # Without shared propagation, DSM would keep seeing an empty folder.
+      - type: bind
+        source: ${SHARE_PATH:-/volume1/dvd}
+        target: /srv/dvd
+        bind:
+          propagation: rshared
+      - dvd-state:/var/lib/dvd
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  dvd-state:

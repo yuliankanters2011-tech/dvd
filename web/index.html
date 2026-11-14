@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>DVD Bridge · Synology</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="DVD Bridge startpagina">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span>DVD <strong>Bridge</strong></span>
+      </a>
+      <span class="connection" id="connection"><span class="dot"></span> Verbinden…</span>
+    </header>
+
+    <section class="hero" aria-labelledby="page-title">
+      <p class="eyebrow">SYNOLOGY · OPTISCHE SPELER</p>
+      <h1 id="page-title">Je cd/dvd,<br><span>gewoon als NAS-map.</span></h1>
+      <p class="lede">Stop een schijf in de aangesloten speler. De bestanden verschijnen in de gedeelde map op je NAS — zonder de schijf te wijzigen.</p>
+    </section>
+
+    <section class="status-card" aria-labelledby="status-title">
+      <div class="disc-visual" id="disc-visual" aria-hidden="true">
+        <div class="disc"><div class="disc-label"></div><div class="disc-hole"></div></div>
+      </div>
+      <div class="status-content">
+        <div class="status-heading">
+          <p class="eyebrow">SPELERSTATUS</p>
+          <span class="badge" id="state-badge">Laden…</span>
+        </div>
+        <h2 id="status-title">De speler wordt gecontroleerd…</h2>
+        <p id="status-message" class="status-message" role="status" aria-live="polite">Even geduld.</p>
+        <dl class="details">
+          <div><dt>Schijf</dt><dd id="disc-label">—</dd></div>
+          <div><dt>Formaat</dt><dd id="disc-format">—</dd></div>
+          <div><dt>Grootte</dt><dd id="disc-size">—</dd></div>
+          <div><dt>Apparaat</dt><dd id="device">—</dd></div>
+        </dl>
+        <div class="actions">
+          <button class="button primary" id="copy-button" type="button">Bestanden kopiëren</button>
+          <button class="button" id="iso-button" type="button">ISO maken</button>
+          <button class="button ghost" id="eject-button" type="button">Uitwerpen</button>
+          <button class="button ghost hidden" id="retry-button" type="button">Opnieuw proberen</button>
+        </div>
+        <p class="action-feedback" id="action-feedback" aria-live="polite"></p>
+        <div class="progress hidden" id="copy-progress">
+          <div class="progress-label"><span id="copy-label">Kopiëren…</span><span id="copy-percent">0%</span></div>
+          <progress id="copy-bar" max="100" value="0"></progress>
+        </div>
+        <div class="progress hidden" id="image-progress">
+          <div class="progress-label"><span>ISO maken…</span><span id="image-percent">0%</span></div>
+          <progress id="image-bar" max="100" value="0"></progress>
+        </div>
+      </div>
+    </section>
+
+    <section class="folder-grid" aria-label="Mappen op de NAS">
+      <article class="folder-card">
+        <span class="folder-icon" aria-hidden="true">01</span>
+        <div>
+          <p class="eyebrow">LIVE SCHIJFMAP</p>
+          <h3>Openen in File Station</h3>
+          <code id="nas-folder">/srv/dvd/disc</code>
+          <p>Rechtstreeks van de schijf. Alleen-lezen; leeg als er geen schijf in de speler zit.</p>
+        </div>
+      </article>
+      <article class="folder-card">
+        <span class="folder-icon secondary" aria-hidden="true">02</span>
+        <div>
+          <p class="eyebrow">KOPIEËN &amp; ISO'S</p>
+          <h3>Bewaren op de NAS</h3>
+          <code id="library-folder">/srv/dvd/library</code>
+          <p>Gekopieerde bestanden kun je gewoon bewerken. Een ISO kun je in File Station als virtuele schijf aankoppelen.</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="notice" aria-labelledby="notice-title">
+      <h2 id="notice-title">Eerlijk over de mogelijkheden</h2>
+      <ul>
+        <li>Dit maakt een <strong>gedeelde map</strong>, geen echte beschrijfbare USB-stick. De originele cd/dvd blijft alleen-lezen.</li>
+        <li>Werkt met gegevens-cd's en dvd's met ISO 9660 of UDF. Audio-cd's, lege schijfjes en beveiligde film-dvd's worden niet automatisch omgezet.</li>
+        <li>De NAS-kernel moet de usb-speler en de bestandssystemen ondersteunen. Niet elk Synology-model kan dit.</li>
+        <li>Deze pagina is bedoeld voor je eigen lokale netwerk en heeft geen wachtwoord. Zet de poort niet open naar internet.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <span>DVD Bridge <span id="version"></span></span>
+      <span>Lezen · Kopiëren · Bewaren</span>
+    </footer>
+  </main>
+</body>
+</html>

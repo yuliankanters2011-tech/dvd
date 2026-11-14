@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "arena/**"]
+    tags: ["v*.*.*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test tools
+        run: python -m pip install -r requirements-dev.txt
+      - name: Lint Python
+        run: |
+          ruff check app tests
+          ruff format --check app tests
+      - name: Unit tests
+        run: python -m pytest
+      - name: Lint shell scripts
+        run: shellcheck scripts/*.sh
+      - name: Validate Compose file
+        run: docker compose config --quiet
+      - name: Build smoke-test image
+        run: docker build -t dvd-bridge:smoke .
+      - name: Smoke-test dashboard without a drive
+        run: |
+          docker run -d --name dvd-smoke -p 127.0.0.1:18080:8080 dvd-bridge:smoke
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18080/healthz; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:18080/healthz
+          curl --fail --silent http://127.0.0.1:18080/api/status
+          docker logs dvd-smoke
+          docker stop dvd-smoke
+      - name: Integration-test real read-only mounts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends genisoimage udftools
+          sudo bash scripts/test-mount.sh
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build (and publish on branches/tags)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
