@@ -55,6 +55,8 @@ Open `http://<NAS-IP>:8085`. De containerpoort blijft 8080; alleen de NAS-poort 
 
 Gebruik dit ook voor de nieuwe ISO-knoppen. Een herstart alleen haalt geen nieuwe image op.
 
+Versie **1.2.1** herstelt het uitlezen van GNU ddrescue-kaartbestanden. Daardoor kan een al volledig uitgelezen ISO alsnog worden opgeslagen met **ISO hervatten**. Verwijder daarbij niet het verborgen `.partial`-bestand in `dvd/library` en niet de `.mapfile` in de `dvd-state`-volume; die vormen samen het bewaarde deelresultaat.
+
 ```bash
 sudo docker pull docker.io/ykdigital/dvd-bridge:latest
 sudo docker stop dvd-bridge

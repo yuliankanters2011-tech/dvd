@@ -29,6 +29,7 @@ LOG = logging.getLogger("dvd.image")
 MARKER_SUFFIX = ".dvd-bridge.json"
 DEFAULT_MAX_MISSING_PERCENT = 0.5
 SECTOR = 2048
+_MAPFILE_STATUSES = frozenset("+-*/?")
 
 
 class ImageError(RuntimeError):
@@ -78,23 +79,41 @@ Progress = Callable[[int, int], None]
 def _mapfile_stats(path: Path, expected_size: int) -> tuple[int, int]:
     """Return (rescued_bytes, missing_bytes) from a GNU ddrescue mapfile.
 
+    The first non-comment line is ddrescue's state: position, status and an
+    optional pass number. It is metadata, not a rescued data block. Every later
+    non-comment line is a block. Inline '#' annotations are ignored.
+
     Mapfile statuses: '+' finished, '*' non-trimmed, '/' non-scraped,
     '-' bad-sector, '?' non-tried. Anything not finished counts as missing.
-    The mapfile must cover the whole input exactly once; otherwise it is not
+    The blocks must cover the whole input exactly once; otherwise it is not
     safe to publish an ISO.
     """
     covered = 0
     rescued = 0
+    saw_state = False
     blocks: list[tuple[int, int, str]] = []
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ImageError(f"Kan het ddrescue-kaartbestand niet lezen: {exc}") from exc
     for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+        line = line.split("#", 1)[0].strip()
+        if not line:
             continue
         parts = line.split()
+        if not saw_state:
+            if len(parts) not in (2, 3):
+                raise ImageError("Het ddrescue-kaartbestand bevat een ongeldige statusregel")
+            try:
+                position = int(parts[0], 0)
+                rescue_pass = int(parts[2]) if len(parts) == 3 else 1
+                valid = position >= 0 and parts[1] in _MAPFILE_STATUSES and rescue_pass >= 1
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ImageError("Het ddrescue-kaartbestand bevat een ongeldige statusregel")
+            saw_state = True
+            continue
         if len(parts) != 3:
             raise ImageError("Het ddrescue-kaartbestand is beschadigd")
         pos_text, size_text, status = parts
@@ -105,9 +124,11 @@ def _mapfile_stats(path: Path, expected_size: int) -> tuple[int, int]:
             raise ImageError("Het ddrescue-kaartbestand bevat ongeldige getallen") from exc
         if pos < 0 or size < 0 or pos + size > expected_size:
             raise ImageError("Het ddrescue-kaartbestand valt buiten de schijfgrootte")
-        if status not in {"+", "-", "*", "/", "?"}:
+        if status not in _MAPFILE_STATUSES:
             raise ImageError("Het ddrescue-kaartbestand bevat een onbekende status")
         blocks.append((pos, size, status))
+    if not saw_state:
+        raise ImageError("Het ddrescue-kaartbestand bevat geen statusregel")
     blocks.sort(key=lambda block: block[0])
     for pos, size, status in blocks:
         if pos != covered:

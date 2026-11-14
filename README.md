@@ -209,6 +209,8 @@ GNU ddrescue leest de schijf in een verborgen `.partial`-bestand met een mapfile
 
 De tolerantie stel je in met `ISO_MAX_MISSING_PERCENT` (0–100, standaard 0.5). Bij een losse `docker run`-installatie voeg je `-e ISO_MAX_MISSING_PERCENT=0.5` toe. Bestaande ISO's en markers worden nooit overschreven.
 
+Versie 1.2.1 herkent de statusregel in GNU ddrescue-kaartbestanden correct. Oudere versies konden daardoor een volledig uitgelezen ISO onterecht weigeren met “Het ddrescue-kaartbestand bevat ongeldige getallen”. Update de container en klik op **ISO hervatten** met dezelfde schijf; verwijder het verborgen `.partial`-bestand en de mapfile niet.
+
 ## Na een NAS-herstart
 
 De dedicated shared bind-mount kan na een reboot verdwijnen. Maak in DSM een taak:
@@ -242,6 +244,7 @@ sudo docker compose logs --tail=100 dvd
 | Uitwerpen mislukt | Er staan nog bestanden open; sluit ze of gebruik de fysieke knop |
 | Lade sluiten doet niets | Slimline/manual speler zonder motor; duw de lade voorzichtig dicht |
 | `FFmpeg ontbreekt` | Oude image; pull/build de nieuwe image met het `ffmpeg`-pakket |
+| `ddrescue-kaartbestand bevat ongeldige getallen` | Versie 1.2.0 of ouder; update naar 1.2.1 en klik **ISO hervatten** zonder het `.partial`-bestand of de mapfile te verwijderen |
 | Conversie meldt “bestaat al” | Er staat al een MP4 of marker; kies een andere naam of verplaats beide |
 | Conversie meldt beschadigd/beveiligd | Bron is mogelijk CSS-versleuteld, beschadigd of geen ondersteunde DVD-Video |
 | Dashboard niet bereikbaar | Container draait niet, poort is bezet, of firewall blokkeert poort 8080 |
@@ -269,9 +272,9 @@ shellcheck scripts/*.sh
 docker compose config --quiet
 ```
 
-CI draait unit-tests, lint, Compose-validatie, een dashboard-smoke-test, echte FFmpeg-conversies op synthetische TS/VOB/VIDEO_TS-media en echte read-only ISO9660/UDF-loopmounttests. De hardware-specifieke Synology-stappen moeten uiteindelijk op je eigen NAS worden gecontroleerd.
+CI draait unit-tests, lint, Compose-validatie, een dashboard-smoke-test, echte FFmpeg-conversies op synthetische TS/VOB/VIDEO_TS-media, echte ddrescue-tests op een tijdelijk schijfbestand en echte read-only ISO9660/UDF-loopmounttests. De smoke-test controleert ook een echt ddrescue 1.29-kaartbestand in de containerimage. De hardware-specifieke Synology-stappen moeten uiteindelijk op je eigen NAS worden gecontroleerd.
 
-Lokaal worden de FFmpeg-conversietests overgeslagen als `ffmpeg`/`ffprobe` niet in `PATH` staan. Installeer ze bijvoorbeeld met `sudo apt-get install ffmpeg` of `brew install ffmpeg`.
+Lokaal worden de FFmpeg-conversietests overgeslagen als `ffmpeg`/`ffprobe` niet in `PATH` staan. Installeer ze bijvoorbeeld met `sudo apt-get install ffmpeg` of `brew install ffmpeg`. De ddrescue-integratietests worden overgeslagen als `ddrescue` ontbreekt; installeer dat met `sudo apt-get install gddrescue` of `brew install ddrescue`.
 
 ## Bronnen / inspiratie
 

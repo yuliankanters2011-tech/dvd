@@ -9,5 +9,7 @@ disc/
 library/
 *.iso
 *.mapfile
+# Kleine regressiefixtures bevatten geen echte schijfdata.
+!tests/fixtures/*.mapfile
 *.log
 .DS_Store
