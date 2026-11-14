@@ -140,13 +140,82 @@ def test_pgc_loop_rejected(tmp_path):
         dvd.inspect_source(tmp_path / "VIDEO_TS")
 
 
-def test_shuffle_title_unsupported(tmp_path):
-    directory = write_dvd(tmp_path)
-    ifo = directory / "VIDEO_TS.IFO"
-    data = bytearray(ifo.read_bytes())
-    data[SECTOR + 8] = 0x20
-    ifo.write_bytes(data)
+@pytest.mark.parametrize("flag", [0x20, 0x40, 0x60])
+def test_vmg_playback_flags_do_not_disable_sequential_title(tmp_path, flag):
+    """Cell commands / multi-PGC hints are not proof of random/shuffle playback."""
+    directory = write_dvd(tmp_path, title_flags=[flag])
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 1
+    assert source.title(1).supported is True
+
+
+def test_episode_titles_with_cell_commands_are_selectable(tmp_path):
+    """Regression: nine ordinary episodes must not become zero usable titles."""
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, number, (number - 1) * 2, number * 2 - 1, 0, number) for number in range(1, 10)],
+        pgcs=[([number - 1], 0) for number in range(1, 10)],
+        titles=[(number, number, 1) for number in range(1, 10)],
+        title_flags=[0x20] * 9,
+        vob_sectors={1: 18},
+    )
+    source = dvd.inspect_source(directory, label="KNIGHT_RIDER")
+    assert source.summary()["title_count"] == 9
+    assert all(title.supported for title in source.titles)
+    assert source.default_title == 9
+    assert source.title(1).duration == 1
+    assert source.title(9).size_bytes == 2 * SECTOR
+
+
+def test_multi_pgc_sequential_title_with_vmg_flag_supported(tmp_path):
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, 1, 0, 1, 0, 2), (1, 2, 2, 3, 0, 3)],
+        pgcs=[([0], 2), ([1], 0)],
+        title_flags=[0x40],
+        vob_sectors={1: 4},
+    )
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 1
+    title = source.title(1)
+    assert title.supported is True
+    assert title.duration == 5
+    assert title.size_bytes == 4 * SECTOR
+
+
+@pytest.mark.parametrize("mode", [1, 2, 0x80])
+def test_pgc_playback_mode_marks_title_unsupported(tmp_path, mode):
+    directory = write_dvd(tmp_path, playback_modes={1: mode})
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 0
+    assert "shuffle" in source.titles[0].reason
+    with pytest.raises(dvd.DvdError, match="shuffle"):
+        source.title(1)
+
+
+def test_pgc_playback_mode_in_later_chain_marks_title_unsupported(tmp_path):
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, 1, 0, 1, 0, 2), (1, 2, 2, 3, 0, 3)],
+        pgcs=[([0], 2), ([1], 0)],
+        playback_modes={2: 1},
+        vob_sectors={1: 4},
+    )
     source = dvd.inspect_source(directory)
     assert source.default_title == 0
     with pytest.raises(dvd.DvdError, match="shuffle"):
         source.title(1)
+
+
+def test_default_title_skips_non_sequential_pgc(tmp_path):
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, 1, 0, 1, 0, 20), (1, 2, 2, 3, 0, 3)],
+        pgcs=[([0], 0), ([1], 0)],
+        titles=[(1, 1, 1), (2, 2, 1)],
+        playback_modes={1: 2},
+        vob_sectors={1: 4},
+    )
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 2
+    assert source.title(2).duration == 3

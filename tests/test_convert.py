@@ -176,16 +176,19 @@ def test_audio_only_from_vob(tmp_path, media, tools):
     assert report["streams"][0]["codec_name"] == "aac"
 
 
-def test_dvd_video_ts_pipe_conversion(tmp_path, media, tools):
+@pytest.mark.parametrize("flag", [0, 0x20])
+def test_dvd_video_ts_pipe_conversion(tmp_path, media, tools, flag):
     data = media[1].read_bytes()
     sectors = len(data) // SECTOR
     directory = write_dvd(
         tmp_path,
         cells=[(1, 1, 0, sectors - 1, 0, 2)],
+        title_flags=[flag],
         vob_sectors={1: sectors},
         vob_bytes={1: data},
     )
     source = dvd.inspect_source(directory)
+    assert source.default_title == 1
     result = run(source, "video", tmp_path / "films", tmp_path / "state", tools, name="DVD test")
     assert result.path.name == "DVD test.mp4"
     assert result.duration == pytest.approx(2.0, abs=0.5)
