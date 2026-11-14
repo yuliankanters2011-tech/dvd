@@ -53,17 +53,51 @@ Open `http://<NAS-IP>:8085`. De containerpoort blijft 8080; alleen de NAS-poort 
 
 ## Updaten zonder Compose
 
-Gebruik dit ook voor de nieuwe ISO-knoppen. Een herstart alleen haalt geen nieuwe image op.
+Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.2**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**.
 
-Versie **1.2.1** herstelt het uitlezen van GNU ddrescue-kaartbestanden. Daardoor kan een al volledig uitgelezen ISO alsnog worden opgeslagen met **ISO hervatten**. Verwijder daarbij niet het verborgen `.partial`-bestand in `dvd/library` en niet de `.mapfile` in de `dvd-state`-volume; die vormen samen het bewaarde deelresultaat.
+Versie **1.2.2** herstelt de titelkeuze: gewone DVD-titels met celcommando's werden in 1.2.1 onterecht als shuffle geweigerd (`titels: 9`, `ondersteund: 0`). De converter leest nu de echte PGC-afspeelmodus. Versie **1.2.1** herstelde al het uitlezen van GNU ddrescue-kaartbestanden; verwijder bij **ISO hervatten** nooit het verborgen `.partial`-bestand of de `.mapfile`.
+
+Voer dit volledige blok uit via SSH:
 
 ```bash
+set -e
 sudo docker pull docker.io/ykdigital/dvd-bridge:latest
-sudo docker stop dvd-bridge
-sudo docker rm dvd-bridge
+if sudo docker container inspect dvd-bridge >/dev/null 2>&1; then
+  sudo docker stop dvd-bridge
+  sudo docker rm dvd-bridge
+fi
+if ! awk '$5 == "/volume1/dvd" {found=1} END {exit !found}' /proc/self/mountinfo; then
+  sudo mount --bind /volume1/dvd /volume1/dvd
+fi
+sudo mount --make-rshared /volume1/dvd
+sudo docker volume create dvd-state
+sudo docker run -d --name dvd-bridge --restart unless-stopped --init \
+  --stop-timeout 30 --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+  --device /dev/sr0:/dev/sr0:r -p 8085:8080 \
+  -e DEVICE=/dev/sr0 -e SHARE_DIR=/srv/dvd -e STATE_DIR=/var/lib/dvd \
+  -e POLL_SECONDS=5 -e WEB_PORT=8080 -e PUID=1024 -e PGID=100 \
+  -e COPY_FILES=false -e AUTO_EJECT=false -e ISO_MAX_MISSING_PERCENT=0.5 \
+  -e FILMS_DIR=/volume1/video/Films -e MUSIC_DIR=/volume1/video/Muziek \
+  -e CONVERT_THREADS=2 -e CONVERT_CRF=20 -e CONVERT_PRESET=veryfast \
+  -e CONVERT_AUDIO_BITRATE=192 \
+  --mount type=bind,source=/volume1/dvd,target=/srv/dvd,bind-propagation=rshared \
+  --mount type=volume,source=dvd-state,target=/var/lib/dvd \
+  --mount type=bind,source=/volume1/video/Films,target=/volume1/video/Films \
+  --mount type=bind,source=/volume1/video/Muziek,target=/volume1/video/Muziek \
+  --log-opt max-size=5m --log-opt max-file=3 \
+  docker.io/ykdigital/dvd-bridge:latest
+poging=0
+while [ "$poging" -lt 10 ]; do
+  if curl --fail --silent http://127.0.0.1:8085/healthz >/dev/null; then break; fi
+  poging=$((poging + 1))
+  sleep 2
+done
+curl --fail --silent http://127.0.0.1:8085/healthz
+printf '\n'
+sudo docker exec dvd-bridge python3 -c 'from app import __version__; print("DVD Bridge versie:", __version__)'
 ```
 
-Voer daarna hetzelfde `docker run`-blok opnieuw uit. De `dvd-state`-volume en je NAS-mappen blijven bestaan.
+Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.2` te staan.
 
 ## Bestandssystemen
 
@@ -87,9 +121,11 @@ Ontbreekt `/dev/sr0`, dan is dit geen Docker-probleem dat de container kan oplos
 
 1. Plaats een onbeveiligde DVD-Video, of kopieer de schijf eerst naar `dvd/library`.
 2. Open het dashboard en kies bij **VIDEO_TS naar MP4** de bron.
-3. Kies de titel. “Langste titel” is meestal de hoofdfilm.
+3. Kies de titel. “Langste titel” is meestal de hoofdfilm; bij een serie kies je de gewenste aflevering.
 4. Kies **Video** en bestemming **Films**, of **Alleen geluid** en bestemming **Muziek**.
 5. Vul eventueel een eigen naam in en klik **Omzetten naar MP4**.
+
+Vanaf versie **1.2.2** blijven gewone titels met celcommando's en opeenvolgende multi-PGC-titels kiesbaar. Alleen echte niet-sequentiële weergave (random/shuffle) krijgt de melding dat die titel niet wordt ondersteund. Zie je geen ondersteunde titels, klik dan **Bronnen verversen** en controleer onderaan dat de versie `v1.2.2` of nieuwer is.
 
 De MP4 komt in de gekoppelde Jellyfin-map. Bestaande bestanden worden nooit overschreven. Naast de MP4 staat een `.dvd-bridge.json` marker; verplaats beide als je dezelfde naam opnieuw wilt gebruiken.
 

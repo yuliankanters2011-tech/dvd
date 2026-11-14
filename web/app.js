@@ -72,6 +72,13 @@ function renderTitles() {
     return;
   }
   const supported = source.titles.filter((item) => item.supported);
+  if (supported.length === 0) {
+    select.append(option("0", "Geen ondersteunde titels"));
+    select.value = "0";
+    const reason = source.titles.find((item) => !item.supported && item.reason)?.reason;
+    $("source-note").textContent = reason || source.note || "Deze bron heeft geen ondersteunde titels.";
+    return;
+  }
   if (supported.length > 1) {
     select.append(option("0", "Langste titel (aanbevolen)"));
   }
@@ -104,10 +111,11 @@ function renderMedia(data) {
   }
   for (const source of data.sources) {
     const where = source.location === "schijf" ? "Schijf" : "NAS";
-    select.append(option(source.id, `${source.label} · ${where} · ${source.title_count} titel(s)`, !source.default_title));
+    const suffix = source.default_title ? "" : " · geen ondersteunde titels";
+    select.append(option(source.id, `${source.label} · ${where} · ${source.title_count} titel(s)${suffix}`));
   }
   const exists = data.sources.some((item) => item.id === previous);
-  select.value = exists ? previous : data.sources.find((item) => item.default_title)?.id || "";
+  select.value = exists ? previous : data.sources.find((item) => item.default_title)?.id || data.sources[0]?.id || "";
   selectedSourceId = select.value;
   renderTitles();
   updateDestination();

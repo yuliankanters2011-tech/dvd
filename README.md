@@ -211,6 +211,8 @@ De tolerantie stel je in met `ISO_MAX_MISSING_PERCENT` (0–100, standaard 0.5).
 
 Versie 1.2.1 herkent de statusregel in GNU ddrescue-kaartbestanden correct. Oudere versies konden daardoor een volledig uitgelezen ISO onterecht weigeren met “Het ddrescue-kaartbestand bevat ongeldige getallen”. Update de container en klik op **ISO hervatten** met dezelfde schijf; verwijder het verborgen `.partial`-bestand en de mapfile niet.
 
+Versie **1.2.2** herstelt de titelkeuze bij gewone DVD-Video. Een celcommando's-vlag in de VMG-tabel betekent niet dat een titel shuffle gebruikt. De converter controleert nu de echte afspeelmodus per PGC; normale afleveringen en opeenvolgende multi-PGC-titels blijven kiesbaar. Alleen niet-sequentiële PGC's (random/shuffle) worden geweigerd. Zie je bij een oudere versie `titels: 9` maar `ondersteund: 0`, werk dan bij naar 1.2.2 en klik **Bronnen verversen**.
+
 ## Na een NAS-herstart
 
 De dedicated shared bind-mount kan na een reboot verdwijnen. Maak in DSM een taak:
@@ -246,6 +248,7 @@ sudo docker compose logs --tail=100 dvd
 | `FFmpeg ontbreekt` | Oude image; pull/build de nieuwe image met het `ffmpeg`-pakket |
 | `ddrescue-kaartbestand bevat ongeldige getallen` | Versie 1.2.0 of ouder; update naar 1.2.1 en klik **ISO hervatten** zonder het `.partial`-bestand of de mapfile te verwijderen |
 | Conversie meldt “bestaat al” | Er staat al een MP4 of marker; kies een andere naam of verplaats beide |
+| Bron toont wel titels maar `ondersteund: 0` | Versie 1.2.1 of ouder kan gewone titels met celcommando's onterecht als shuffle weigeren; update naar 1.2.2 |
 | Conversie meldt beschadigd/beveiligd | Bron is mogelijk CSS-versleuteld, beschadigd of geen ondersteunde DVD-Video |
 | Dashboard niet bereikbaar | Container draait niet, poort is bezet, of firewall blokkeert poort 8080 |
 

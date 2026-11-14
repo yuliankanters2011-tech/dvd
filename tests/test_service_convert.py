@@ -157,6 +157,19 @@ def test_media_lists_library_sources(svc):
     assert media["destinations"]["music"]["path"] == str(svc.config.music_dir)
 
 
+def test_mounted_episode_dvd_is_convertible_in_media(svc):
+    write_dvd(svc.config.mountpoint, title_flags=[0x20])
+    svc._mounted = True
+    svc._disc = drive.DiscInfo("identiteit", "KNIGHT_RIDER", "udf", 100)
+    media = svc.media()
+    assert len(media["sources"]) == 1
+    source = media["sources"][0]
+    assert source["id"] == "disc"
+    assert source["label"] == "KNIGHT_RIDER"
+    assert source["default_title"] == 1
+    assert source["titles"][0]["supported"] is True
+
+
 def test_shutdown_sets_conversion_stop(svc, monkeypatch):
     monkeypatch.setattr(svc._worker, "join", lambda timeout=None: None)
     svc.shutdown()

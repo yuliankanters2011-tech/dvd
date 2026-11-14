@@ -214,6 +214,7 @@ class _Pgc:
     duration: float
     segments: tuple[Segment, ...]
     next_pgc: int
+    playback_mode: int = 0
 
 
 def _pgc(data: bytes, pgcn: int, files: tuple[Path, ...], ends: tuple[int, ...]) -> _Pgc:
@@ -224,12 +225,18 @@ def _pgc(data: bytes, pgcn: int, files: tuple[Path, ...], ends: tuple[int, ...])
     start = base + _u32(data, base + 8 + (pgcn - 1) * 8 + 4)
     if start < base + 8 + count * 8 or start + 236 > end:
         raise DvdError("De DVD-index bevat een afgebroken programmaketen")
+    next_pgc = _u16(data, start + 0x9C)
+    # PGC playback mode is the authoritative random/shuffle flag. The VMG
+    # title byte only says "multi or random" and also has a cell-command bit.
+    playback_mode = data[start + 0xA1]
+    if playback_mode != 0:
+        return _Pgc(0.0, (), next_pgc, playback_mode)
     cells = data[start + 3]
     # On-disk PGC header is 236 bytes; pointers are relative to the PGC start.
     playback_offset = _u16(data, start + 0xE8)
     position_offset = _u16(data, start + 0xEA)
     if cells == 0 or playback_offset == 0 or position_offset == 0:
-        return _Pgc(0.0, (), _u16(data, start + 0x9C))
+        return _Pgc(0.0, (), next_pgc)
     if (
         playback_offset < 236
         or position_offset < 236
@@ -257,21 +264,12 @@ def _pgc(data: bytes, pgcn: int, files: tuple[Path, ...], ends: tuple[int, ...])
         segments.extend(_range_segments(files, ends, first, last))
     if not segments:
         raise DvdError("De geselecteerde DVD-titel bevat geen leesbare cellen")
-    return _Pgc(duration, tuple(segments), _u16(data, start + 0x9C))
+    return _Pgc(duration, tuple(segments), next_pgc)
 
 
 def _vts_title(
-    directory: Path, number: int, global_number: int, vts_ttn: int, chapters: int, playback: int
+    directory: Path, number: int, global_number: int, vts_ttn: int, chapters: int
 ) -> Title:
-    if playback & 0x60:
-        return Title(
-            global_number,
-            0,
-            chapters,
-            (),
-            False,
-            "Deze titel gebruikt willekeurige/shuffle-weergave en wordt niet ondersteund.",
-        )
     data = _ifo(directory, f"VTS_{number:02d}_0", b"DVDVIDEO-VTS")
     ptt_base = _u32(data, 0xC8) * SECTOR
     count, ptt_end = _table(data, ptt_base, 4, 99)
@@ -292,6 +290,15 @@ def _vts_title(
             raise DvdError("De DVD-index bevat een lus in de programmaketen")
         visited.add(pgcn)
         chain = _pgc(data, pgcn, files, ends)
+        if chain.playback_mode != 0:
+            return Title(
+                global_number,
+                0,
+                chapters,
+                (),
+                False,
+                "Deze titel gebruikt willekeurige/shuffle-weergave en wordt niet ondersteund.",
+            )
         duration += chain.duration
         segments.extend(chain.segments)
         pgcn = chain.next_pgc
@@ -309,9 +316,7 @@ def _dvd_source(directory: Path, label: str | None = None) -> Source:
         vts_ttn = data[offset + 7]
         if not 1 <= vts <= 99 or not 1 <= vts_ttn <= 99:
             raise DvdError("De DVD-index bevat een ongeldig titelnummer")
-        titles.append(
-            _vts_title(directory, vts, index + 1, vts_ttn, _u16(data, offset + 2), data[offset])
-        )
+        titles.append(_vts_title(directory, vts, index + 1, vts_ttn, _u16(data, offset + 2)))
     name = label or (
         directory.parent.name if directory.name.casefold() == "video_ts" else directory.name
     )
