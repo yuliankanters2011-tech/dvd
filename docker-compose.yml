@@ -1,0 +1,53 @@
+# Kant-en-klaar installatiebestand voor Synology Container Manager.
+# Dit bestand bouwt niets lokaals; het downloadt een gepubliceerde image.
+#
+# Standaard: GitHub Container Registry.
+# Voor Docker Hub: zet in .env of project-environment:
+#   IMAGE_NAME=docker.io/<jouw-dockerhub-gebruikersnaam>/dvd-bridge
+#   IMAGE_TAG=latest
+#
+# Let op: voer eerst scripts/prepare-host.sh op de NAS uit.
+# Anders blijft de schijfmap leeg door ontbrekende mount-propagation.
+
+name: dvd-bridge
+
+services:
+  dvd:
+    image: ${IMAGE_NAME:-ghcr.io/yuliankanters2011-tech/dvd}:${IMAGE_TAG:-latest}
+    container_name: dvd-bridge
+    restart: unless-stopped
+    init: true
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    devices:
+      - "${DEVICE:-/dev/sr0}:/dev/sr0:r"
+    environment:
+      DEVICE: /dev/sr0
+      SHARE_DIR: /srv/dvd
+      STATE_DIR: /var/lib/dvd
+      POLL_SECONDS: ${POLL_SECONDS:-5}
+      WEB_PORT: 8080
+      PUID: ${PUID:-1024}
+      PGID: ${PGID:-100}
+      COPY_FILES: ${COPY_FILES:-false}
+      AUTO_EJECT: ${AUTO_EJECT:-false}
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+    volumes:
+      - type: bind
+        source: ${SHARE_PATH:-/volume1/dvd}
+        target: /srv/dvd
+        bind:
+          propagation: rshared
+      - dvd-state:/var/lib/dvd
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  dvd-state:

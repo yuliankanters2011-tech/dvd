@@ -2,7 +2,7 @@ name: dvd-bridge
 
 services:
   dvd:
-    image: ghcr.io/yuliankanters2011-tech/dvd:${IMAGE_TAG:-latest}
+    image: ${IMAGE_NAME:-ghcr.io/yuliankanters2011-tech/dvd}:${IMAGE_TAG:-latest}
     build:
       context: .
     container_name: dvd-bridge
