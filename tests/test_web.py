@@ -92,3 +92,82 @@ def test_no_path_traversal(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(url(httpd, "/../app/config.py"))
     assert exc.value.code == 404
+
+
+def post_json(httpd, path, payload):
+    request = urllib.request.Request(
+        url(httpd, path),
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "X-DVD-Bridge": "1"},
+        method="POST",
+    )
+    return urllib.request.urlopen(request)
+
+
+def test_media_endpoint(server):
+    httpd, _ = server
+    with urllib.request.urlopen(url(httpd, "/api/media")) as response:
+        data = json.load(response)
+    assert data["sources"] == []
+    assert set(data["destinations"]) == {"films", "music"}
+
+
+def test_convert_endpoint_queues_job(server):
+    httpd, service = server
+    with post_json(
+        httpd,
+        "/api/convert",
+        {"source_id": "abc", "title": 2, "mode": "audio", "destination": "music", "name": "Test"},
+    ) as response:
+        assert response.status == 202
+    job = service.commands.get_nowait()
+    assert job.source_id == "abc" and job.title == 2
+    assert job.mode == "audio" and job.destination == "music" and job.name == "Test"
+
+
+def test_convert_endpoint_defaults_by_mode(server):
+    httpd, service = server
+    with post_json(httpd, "/api/convert", {"source_id": "abc", "mode": "audio"}) as response:
+        assert response.status == 202
+    job = service.commands.get_nowait()
+    assert job.title == 0 and job.destination == "music"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"source_id": "abc", "title": "1"},
+        {"source_id": "abc", "mode": "mkv"},
+        {"source_id": "abc", "destination": "/etc"},
+        {"source_id": "abc", "name": 123},
+        {"source_id": "abc", "name": "x" * 201},
+    ],
+)
+def test_convert_endpoint_rejects_invalid(server, payload):
+    httpd, _ = server
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/convert", payload)
+    assert exc.value.code == 400
+
+
+def test_convert_endpoint_requires_csrf(server):
+    httpd, _ = server
+    request = urllib.request.Request(
+        url(httpd, "/api/convert"),
+        data=b'{"source_id":"abc"}',
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(request)
+    assert exc.value.code == 403
+
+
+def test_close_and_cancel_commands(server):
+    httpd, service = server
+    with post_json(httpd, "/api/command", {"command": "close"}) as response:
+        assert response.status == 202
+    assert service.commands.get_nowait() == "close"
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/command", {"command": "cancel"})
+    assert exc.value.code == 409

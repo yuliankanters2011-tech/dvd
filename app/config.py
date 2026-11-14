@@ -42,6 +42,14 @@ class Config:
     pgid: int = 100
     copy_files: bool = False
     auto_eject: bool = False
+    films_dir: Path = Path("/volume1/video/Films")
+    music_dir: Path = Path("/volume1/video/Muziek")
+    convert_threads: int = 2
+    convert_crf: int = 20
+    convert_preset: str = "veryfast"
+    convert_audio_bitrate: int = 192
+    ffmpeg_bin: str = "ffmpeg"
+    ffprobe_bin: str = "ffprobe"
 
     @property
     def mountpoint(self) -> Path:
@@ -64,6 +72,18 @@ class Config:
             raise ConfigError("De root-map mag niet als doel worden gebruikt")
         if share.resolve() == state.resolve() or share.resolve() in state.resolve().parents:
             raise ConfigError("STATE_DIR mag niet in SHARE_DIR staan")
+        films = Path(os.environ.get("FILMS_DIR", "/volume1/video/Films"))
+        music = Path(os.environ.get("MUSIC_DIR", "/volume1/video/Muziek"))
+        for name, path in (("FILMS_DIR", films), ("MUSIC_DIR", music)):
+            if not path.is_absolute() or path.resolve() == Path("/"):
+                raise ConfigError(f"{name} moet een absoluut pad naar een Jellyfin-map zijn")
+        if films.resolve() == music.resolve():
+            raise ConfigError("FILMS_DIR en MUSIC_DIR moeten verschillende mappen zijn")
+        if films.resolve() in music.resolve().parents or music.resolve() in films.resolve().parents:
+            raise ConfigError("FILMS_DIR en MUSIC_DIR mogen niet in elkaar liggen")
+        preset = os.environ.get("CONVERT_PRESET", "veryfast").strip()
+        if preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium"}:
+            raise ConfigError("CONVERT_PRESET moet ultrafast t/m medium zijn")
         # Zero is allowed for a deliberately root-owned DSM shared folder.
         puid = integer("PUID", 1024, 0, 4294967294)
         pgid = integer("PGID", 100, 0, 4294967294)
@@ -77,4 +97,12 @@ class Config:
             pgid=pgid,
             copy_files=boolean("COPY_FILES"),
             auto_eject=boolean("AUTO_EJECT"),
+            films_dir=films,
+            music_dir=music,
+            convert_threads=integer("CONVERT_THREADS", 2, 1, 16),
+            convert_crf=integer("CONVERT_CRF", 20, 1, 51),
+            convert_preset=preset,
+            convert_audio_bitrate=integer("CONVERT_AUDIO_BITRATE", 192, 64, 512),
+            ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg").strip() or "ffmpeg",
+            ffprobe_bin=os.environ.get("FFPROBE_BIN", "ffprobe").strip() or "ffprobe",
         )

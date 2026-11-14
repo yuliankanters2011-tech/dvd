@@ -62,6 +62,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status":
             self._json(200, self.service.snapshot())
             return
+        if path == "/api/media":
+            try:
+                self._json(200, self.service.media())
+            except OSError:
+                self._json(503, {"error": "De bronnenlijst kon niet worden gelezen"})
+            return
         static = {
             "/": ("index.html", "text/html; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -79,7 +85,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path != "/api/command":
+        if path not in {"/api/command", "/api/convert"}:
             self._json(404, {"error": "Niet gevonden"})
             return
         # A custom header forces a CORS preflight in browsers. We do not grant
@@ -111,16 +117,32 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             payload = json.loads(self.rfile.read(length))
-            command = payload["command"]
-            if not isinstance(command, str):
+            if not isinstance(payload, dict):
                 raise TypeError
-            self.service.request(command)
+            if path == "/api/command":
+                command = payload["command"]
+                if not isinstance(command, str):
+                    raise TypeError
+                self.service.request(command)
+                self._json(202, {"accepted": True, "command": command})
+            else:
+                source_id = payload["source_id"]
+                title = payload.get("title", 0)
+                mode = payload.get("mode", "video")
+                destination = payload.get("destination", "films" if mode == "video" else "music")
+                name = payload.get("name", "")
+                if not isinstance(source_id, str) or type(title) is not int:
+                    raise TypeError
+                if not isinstance(mode, str) or not isinstance(destination, str):
+                    raise TypeError
+                if not isinstance(name, str):
+                    raise TypeError
+                self.service.request_conversion(source_id, title, mode, destination, name)
+                self._json(202, {"accepted": True, "source_id": source_id, "title": title})
         except (ValueError, KeyError, TypeError):
             self._json(400, {"error": "Ongeldige opdracht"})
         except RuntimeError as exc:
             self._json(409, {"error": str(exc)})
-        else:
-            self._json(202, {"accepted": True, "command": command})
 
 
 class DashboardServer(ThreadingHTTPServer):

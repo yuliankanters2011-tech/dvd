@@ -25,6 +25,12 @@ services:
       PGID: ${PGID:-100}
       COPY_FILES: ${COPY_FILES:-false}
       AUTO_EJECT: ${AUTO_EJECT:-false}
+      FILMS_DIR: /volume1/video/Films
+      MUSIC_DIR: /volume1/video/Muziek
+      CONVERT_THREADS: ${CONVERT_THREADS:-2}
+      CONVERT_CRF: ${CONVERT_CRF:-20}
+      CONVERT_PRESET: ${CONVERT_PRESET:-veryfast}
+      CONVERT_AUDIO_BITRATE: ${CONVERT_AUDIO_BITRATE:-192}
     ports:
       # For local-network use only. Do not forward this port on your router.
       - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
@@ -37,6 +43,13 @@ services:
         bind:
           propagation: rshared
       - dvd-state:/var/lib/dvd
+      # Jellyfin libraries. Ordinary file writes do not need mount propagation.
+      - type: bind
+        source: ${FILMS_PATH:-/volume1/video/Films}
+        target: /volume1/video/Films
+      - type: bind
+        source: ${MUSIC_PATH:-/volume1/video/Muziek}
+        target: /volume1/video/Muziek
     stop_grace_period: 30s
     logging:
       driver: json-file

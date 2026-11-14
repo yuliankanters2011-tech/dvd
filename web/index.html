@@ -22,7 +22,7 @@
     <section class="hero" aria-labelledby="page-title">
       <p class="eyebrow">SYNOLOGY · OPTISCHE SPELER</p>
       <h1 id="page-title">Je cd/dvd,<br><span>gewoon als NAS-map.</span></h1>
-      <p class="lede">Stop een schijf in de aangesloten speler. De bestanden verschijnen in de gedeelde map op je NAS — zonder de schijf te wijzigen.</p>
+      <p class="lede">Stop een schijf in de aangesloten speler. Lees de bestanden als NAS-map, of zet DVD-video en geluid om naar MP4 voor Jellyfin.</p>
     </section>
 
     <section class="status-card" aria-labelledby="status-title">
@@ -45,6 +45,7 @@
         <div class="actions">
           <button class="button primary" id="copy-button" type="button">Bestanden kopiëren</button>
           <button class="button" id="iso-button" type="button">ISO maken</button>
+          <button class="button ghost" id="close-button" type="button">Lade sluiten</button>
           <button class="button ghost" id="eject-button" type="button">Uitwerpen</button>
           <button class="button ghost hidden" id="retry-button" type="button">Opnieuw proberen</button>
         </div>
@@ -58,6 +59,53 @@
           <progress id="image-bar" max="100" value="0"></progress>
         </div>
       </div>
+    </section>
+
+    <section class="converter-card" aria-labelledby="converter-title">
+      <div class="converter-heading">
+        <div>
+          <p class="eyebrow">PYTHON + FFMPEG · JELLYFIN</p>
+          <h2 id="converter-title">VIDEO_TS naar MP4</h2>
+          <p>Kies een bron, titel en bestemming. Bestaande bestanden worden nooit overschreven.</p>
+        </div>
+        <button class="button ghost" id="refresh-sources" type="button">Bronnen verversen</button>
+      </div>
+      <div class="converter-grid">
+        <label>Bron
+          <select id="convert-source"><option value="">Bronnen laden…</option></select>
+        </label>
+        <label>Titel
+          <select id="convert-title"><option value="0">Langste titel (aanbevolen)</option></select>
+        </label>
+        <label>Type
+          <select id="convert-mode">
+            <option value="video">Video · H.264 + AAC</option>
+            <option value="audio">Alleen geluid · AAC in MP4</option>
+          </select>
+        </label>
+        <label>Bestemming
+          <select id="convert-destination">
+            <option value="films">Jellyfin · Films</option>
+            <option value="music">Jellyfin · Muziek</option>
+          </select>
+        </label>
+        <label class="wide">Naam (optioneel)
+          <input id="convert-name" type="text" maxlength="200" placeholder="Standaard: naam van de schijf of het bestand" autocomplete="off">
+        </label>
+      </div>
+      <p class="convert-path" id="convert-path">/volume1/video/Films</p>
+      <p class="source-note" id="source-note"></p>
+      <div class="actions">
+        <button class="button primary" id="convert-button" type="button">Omzetten naar MP4</button>
+        <button class="button ghost hidden" id="cancel-convert" type="button">Annuleren</button>
+      </div>
+      <p class="action-feedback" id="convert-feedback" aria-live="polite"></p>
+      <div class="progress hidden" id="convert-progress">
+        <div class="progress-label"><span id="convert-label">Omzetten…</span><span id="convert-percent">0%</span></div>
+        <progress id="convert-bar" max="100" value="0"></progress>
+        <p class="progress-meta" id="convert-meta"></p>
+      </div>
+      <p class="converter-help">AUDIO_TS op DVD-Audio wordt niet ondersteund. Voor muziek uit VIDEO_TS kies je “Alleen geluid”. Versleutelde dvd’s geven een duidelijke fout; er worden geen beveiligingen omzeild.</p>
     </section>
 
     <section class="folder-grid" aria-label="Mappen op de NAS">
@@ -85,7 +133,7 @@
       <h2 id="notice-title">Eerlijk over de mogelijkheden</h2>
       <ul>
         <li>Dit maakt een <strong>gedeelde map</strong>, geen echte beschrijfbare USB-stick. De originele cd/dvd blijft alleen-lezen.</li>
-        <li>Werkt met gegevens-cd's en dvd's met ISO 9660 of UDF. Audio-cd's, lege schijfjes en beveiligde film-dvd's worden niet automatisch omgezet.</li>
+        <li>De mapweergave werkt met gegevens-cd's en dvd's met ISO 9660 of UDF. Onbeveiligde DVD-video (VIDEO_TS) en losse TS/VOB-bestanden kunnen naar MP4. AUDIO_TS/DVD-Audio, audio-cd's en CSS-beveiligde dvd's worden niet omzeild.</li>
         <li>De NAS-kernel moet de usb-speler en de bestandssystemen ondersteunen. Niet elk Synology-model kan dit.</li>
         <li>Deze pagina is bedoeld voor je eigen lokale netwerk en heeft geen wachtwoord. Zet de poort niet open naar internet.</li>
       </ul>
@@ -93,7 +141,7 @@
 
     <footer>
       <span>DVD Bridge <span id="version"></span></span>
-      <span>Lezen · Kopiëren · Bewaren</span>
+      <span>Lezen · Omzetten · Delen</span>
     </footer>
   </main>
 </body>

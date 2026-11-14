@@ -1,8 +1,8 @@
 # DVD Bridge voor Synology
 
-Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest en de bestanden in een **gewone gedeelde NAS-map** zet. Je kunt de map openen in File Station, via SMB op Windows/macOS, of de bestanden naar de NAS kopiëren.
+Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest en de bestanden in een **gewone gedeelde NAS-map** zet. Je kunt de map openen in File Station, via SMB op Windows/macOS, de bestanden naar de NAS kopiëren, of onbeveiligde DVD-video omzetten naar **MP4 voor Jellyfin**.
 
-> **Belangrijk:** dit maakt geen echte beschrijfbare USB-stick van de speler. Een cd/dvd blijft alleen-lezen. De container maakt de inhoud zichtbaar als normale bestanden en kan optioneel een kopie of ISO-bestand op de NAS bewaren.
+> **Belangrijk:** dit maakt geen echte beschrijfbare USB-stick van de speler. Een cd/dvd blijft alleen-lezen. De container maakt de inhoud zichtbaar als normale bestanden en kan optioneel een kopie, ISO-bestand of MP4 op de NAS bewaren.
 
 ## Wat werkt er?
 
@@ -10,8 +10,11 @@ Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest e
 - Automatisch aankoppelen na het inwerpen van een schijf.
 - Live, alleen-lezen map: `/volume1/dvd/disc`.
 - Optioneel automatisch kopiëren naar `/volume1/dvd/library`.
-- Webdashboard met status, kopieerknop, ISO-knop en uitwerpen.
+- Webdashboard met status, kopieerknop, ISO-knop, lade sluiten en uitwerpen.
 - ISO-bestanden die je in DSM File Station als virtuele schijf kunt aankoppelen.
+- **VIDEO_TS naar MP4**: kies een titel uit de dvd of een losse `.ts`/`.vob`/`.mpg`/`.mpeg` uit de NAS-bibliotheek.
+- Twee vaste Jellyfin-bestemmingen: **Films** (H.264 + AAC) en **Muziek** (alleen AAC-geluid in MP4).
+- Voortgang, annuleren, hervatten via idempotente markers en nooit bestaande bestanden overschrijven.
 - Geen `privileged: true`; alleen `SYS_ADMIN`, één apparaat en AppArmor-unconfined voor mounten.
 
 ## Wat werkt niet automatisch?
@@ -19,7 +22,9 @@ Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest e
 - Een cd/dvd-speler echt als beschrijfbare USB-stick of harde schijf voordoen.
 - Audio-cd's rippen naar MP3.
 - Lege cd's/dvd's beschrijven.
-- CSS/beveiligde film-dvd's omzetten naar MP4/MKV. De ruwe `.VOB`-bestanden kunnen soms wel zichtbaar zijn, maar decryptie of transcodering zit niet in deze container.
+- CSS/beveiligde film-dvd's omzetten. De ruwe `.VOB`-bestanden kunnen soms wel zichtbaar zijn, maar de container bevat geen decryptie en omzeilt geen beveiliging.
+- Echte DVD-Audio (AUDIO_TS/AOB) en audio-cd's zonder bestandssysteem. Het geluid van een normale DVD-Video staat in `VIDEO_TS/*.VOB`; kies daarvoor “Alleen geluid”.
+- DVD-menu's, meerdere camerahoeken tegelijk, shuffle-titels en het kiezen van een andere audiotrack dan de eerste. Bij een hoekblok wordt alleen hoek 1 bewaard.
 - Synology-modellen/DSM-versies zonder `cdrom`/`sr_mod`-ondersteuning. Docker kan geen ontbrekende NAS-kerneldriver repareren.
 
 Synology ondersteunt extern optische media niet op alle modellen. Controleer daarom eerst of de NAS `/dev/sr0` aanmaakt. Zie de Synology-communitymelding over usb-dvd-spelers: <https://community.synology.com/enu/forum/1/post/153115>.
@@ -62,7 +67,14 @@ Het script:
 - probeert aanwezige kernelmodules te laden;
 - maakt `disc` en `library` in de gedeelde map;
 - maakt alleen die map `rshared` voor mount-propagation;
-- schrijft `.env` met je DSM UID/GID.
+- maakt `Films` en `Muziek` onder de Jellyfin-map (standaard `/volume1/video`);
+- schrijft `.env` met je DSM UID/GID en de converterinstellingen.
+
+Gebruik een andere Jellyfin-map met:
+
+```bash
+sudo bash scripts/prepare-host.sh --media-root /volume1/media
+```
 
 Open daarna:
 
@@ -83,6 +95,37 @@ De live schijf staat in:
 - **macOS:** Finder → Ga → Verbind met server → `smb://<NAS-IP>/dvd/disc`.
 
 De stationsletter/network drive is een normale SMB-mapweergave, geen USB-blokapparaat.
+
+## DVD-video naar MP4 voor Jellyfin
+
+Open het dashboard en gebruik het blok **VIDEO_TS naar MP4**:
+
+1. Kies een bron: de geplaatste dvd (`Schijf`) of een eerdere import/losse videobestand uit `dvd/library` (`NAS`).
+2. Kies de titel. Standaard wordt de langste ondersteunde titel gekozen; titel 0 betekent “langste titel”.
+3. Kies **Video** voor een film in `Films`, of **Alleen geluid** voor een AAC-MP4 in `Muziek`.
+4. Kies de bestemming en eventueel een eigen bestandsnaam.
+5. Klik **Omzetten naar MP4**. Laat de NAS en de usb-speler aangesloten tot de conversie klaar is.
+
+De uitvoer staat standaard in:
+
+```text
+/volume1/video/Films   # H.264-video + AAC-geluid, MP4
+/volume1/video/Muziek  # alleen AAC-geluid, MP4
+```
+
+Voeg deze mappen in Jellyfin toe als bibliotheek. De container schrijft eerst een verborgen `.partial.mp4`, controleert het resultaat met `ffprobe` en publiceert het daarna zonder bestaande bestanden te overschrijven. Naast elke MP4 staat een `.dvd-bridge.json` marker. Dezelfde bron/titel/instellingen opnieuw aanbieden is een no-op; bij een andere bron of gewijzigde instellingen moet je een andere naam kiezen of het bestaande bestand plus marker verplaatsen.
+
+CLI in de container:
+
+```bash
+sudo docker compose exec dvd python3 -m app.convert --source /srv/dvd/disc --list
+sudo docker compose exec dvd python3 -m app.convert \
+  --source /srv/dvd/disc --title 0 --mode video --destination films --name "Mijn film"
+sudo docker compose exec dvd python3 -m app.convert \
+  --source /srv/dvd/library/IMPORT/VIDEO_TS --mode audio --destination music
+```
+
+`--output-dir` is een expliciete doelmap en mag niet samen met `--destination` worden gebruikt. Annuleren kan via het dashboard; SIGINT/SIGTERM breekt de CLI netjes af. Onvoltooide verborgen partiële bestanden worden bij een normale annulering verwijderd.
 
 ## Container Manager zonder SSH-bouw
 
@@ -125,9 +168,17 @@ Zie [docs/dockerhub.md](docs/dockerhub.md). Kort gezegd:
 | `PUID`/`PGID` | DSM-account | Eigenaar van gekopieerde bestanden |
 | `POLL_SECONDS` | `5` | Interval voor schijfdetectie |
 | `COPY_FILES` | `false` | Nieuwe schijven automatisch kopiëren naar `library` |
-| `AUTO_EJECT` | `false` | Uitwerpen na geslaagde automatische kopie |
+| `AUTO_EJECT` | `false` | Uitwerpen na geslaagde automatische kopie of live-dvd-conversie |
+| `FILMS_PATH` | `/volume1/video/Films` | Hostmap voor Jellyfin-films |
+| `MUSIC_PATH` | `/volume1/video/Muziek` | Hostmap voor Jellyfin-muziek |
+| `CONVERT_THREADS` | `2` | FFmpeg-threads (1–16); lager houdt de NAS responsiever |
+| `CONVERT_CRF` | `20` | H.264-kwaliteit (1–51); lager = beter en groter |
+| `CONVERT_PRESET` | `veryfast` | `ultrafast` t/m `medium`; sneller = minder CPU, groter bestand |
+| `CONVERT_AUDIO_BITRATE` | `192` | AAC-kbps (64–512) |
 | `IMAGE_NAME` | `ghcr.io/yuliankanters2011-tech/dvd` | Image-repository, bijvoorbeeld `docker.io/<user>/dvd-bridge` |
 | `IMAGE_TAG` | `latest` | Imagetag |
+
+De containerpaden `FILMS_DIR` en `MUSIC_DIR` staan vast op `/volume1/video/Films` en `/volume1/video/Muziek`; de hostpaden hierboven worden daarnaartoe gemount. `prepare-host.sh --media-root` past de hostpaden aan.
 
 Voorbeeld automatisch kopiëren:
 
@@ -169,6 +220,10 @@ sudo docker compose logs --tail=100 dvd
 | NAS-map blijft leeg | `prepare-host.sh` is niet uitgevoerd, of `SHARE_PATH` wijst naar een andere map |
 | `wrong fs type` / `invalid argument` | Kernel mist `udf`, `isofs` of `nls_utf8`, of de schijf is geen gegevensschijf |
 | Uitwerpen mislukt | Er staan nog bestanden open; sluit ze of gebruik de fysieke knop |
+| Lade sluiten doet niets | Slimline/manual speler zonder motor; duw de lade voorzichtig dicht |
+| `FFmpeg ontbreekt` | Oude image; pull/build de nieuwe image met het `ffmpeg`-pakket |
+| Conversie meldt “bestaat al” | Er staat al een MP4 of marker; kies een andere naam of verplaats beide |
+| Conversie meldt beschadigd/beveiligd | Bron is mogelijk CSS-versleuteld, beschadigd of geen ondersteunde DVD-Video |
 | Dashboard niet bereikbaar | Container draait niet, poort is bezet, of firewall blokkeert poort 8080 |
 
 ## Beveiliging en gedrag
@@ -179,6 +234,9 @@ sudo docker compose logs --tail=100 dvd
 - Kopiëren schrijft eerst naar een verborgen staging-map en publiceert die pas na voltooiing. Bestaande imports worden niet overschreven.
 - Symlinks, apparaatbestanden en FIFO's op de schijf worden overgeslagen bij kopiëren.
 - ISO-maken gebruikt GNU ddrescue en bewaart geen partieel resultaat als er onleesbare blokken zijn.
+- De converter accepteert alleen bron-id's uit de vaste bronnenlijst en schrijft alleen naar de twee gekoppelde Jellyfin-mappen. FFmpeg wordt zonder shell aangestuurd.
+- MP4-publicatie gebeurt met een harde link die faalt als het doel al bestaat. De marker wordt apart gepubliceerd; bij een markerfout wordt de nieuwe MP4 teruggedraaid.
+- CSS wordt niet omzeild. DVD-Audio, menu's en shuffle-titels geven een uitleg in plaats van een stille mislukking.
 
 ## Ontwikkelen en testen
 
@@ -191,7 +249,9 @@ shellcheck scripts/*.sh
 docker compose config --quiet
 ```
 
-CI draait unit-tests, lint, Compose-validatie, een dashboard-smoke-test en echte read-only ISO9660/UDF-loopmounttests. De hardware-specifieke Synology-stappen moeten uiteindelijk op je eigen NAS worden gecontroleerd.
+CI draait unit-tests, lint, Compose-validatie, een dashboard-smoke-test, echte FFmpeg-conversies op synthetische TS/VOB/VIDEO_TS-media en echte read-only ISO9660/UDF-loopmounttests. De hardware-specifieke Synology-stappen moeten uiteindelijk op je eigen NAS worden gecontroleerd.
+
+Lokaal worden de FFmpeg-conversietests overgeslagen als `ffmpeg`/`ffprobe` niet in `PATH` staan. Installeer ze bijvoorbeeld met `sudo apt-get install ffmpeg` of `brew install ffmpeg`.
 
 ## Bronnen / inspiratie
 

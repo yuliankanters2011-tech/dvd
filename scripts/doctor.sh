@@ -67,7 +67,30 @@ section "Container"
 if ((${#COMPOSE[@]})); then
     "${COMPOSE[@]}" ps || true
     "${COMPOSE[@]}" logs --tail=40 dvd || true
+    if "${COMPOSE[@]}" exec -T dvd ffmpeg -version >/dev/null 2>&1; then
+        ok "FFmpeg aanwezig in de container"
+    else
+        warn "FFmpeg ontbreekt of de container draait niet. Pull/build de nieuwe image."
+    fi
+    if "${COMPOSE[@]}" exec -T dvd ffprobe -version >/dev/null 2>&1; then
+        ok "ffprobe aanwezig in de container"
+    else
+        warn "ffprobe ontbreekt of de container draait niet."
+    fi
 fi
+
+section "Jellyfin-mappen"
+if [[ -r .env ]]; then
+    # shellcheck disable=SC1090
+    source <(grep -E '^(FILMS_PATH|MUSIC_PATH)=' .env)
+fi
+for folder in "${FILMS_PATH:-/volume1/video/Films}" "${MUSIC_PATH:-/volume1/video/Muziek}"; do
+    if [[ -d $folder && -w $folder ]]; then
+        ok "$folder bestaat en is schrijfbaar"
+    else
+        warn "$folder ontbreekt of is niet schrijfbaar. Voer prepare-host.sh uit."
+    fi
+done
 
 section "Dashboard"
 WEB_PORT=${WEB_PORT:-8080}
@@ -86,4 +109,6 @@ Veelvoorkomende oorzaken:
 - Mount permission denied: Container Manager blokkeert SYS_ADMIN/mount; controleer compose en DSM-versie.
 - Lege NAS-map: mount-propagation staat niet aan of de container gebruikt een ander SHARE_PATH.
 - wrong fs type: kernel mist udf/iso9660/nls_utf8, of de schijf is geen gegevensschijf.
+- FFmpeg ontbreekt: de container draait nog op een oude image zonder ffmpeg-pakket.
+- Jellyfin-map niet schrijfbaar: controleer FILMS_PATH/MUSIC_PATH en voer prepare-host.sh uit.
 EOF

@@ -57,3 +57,67 @@ def test_state_inside_share_rejected(monkeypatch, tmp_path):
     monkeypatch.setenv("STATE_DIR", str(tmp_path / "share" / "state"))
     with pytest.raises(ConfigError):
         Config.from_env()
+
+
+def test_converter_defaults(monkeypatch):
+    for key in (
+        "FILMS_DIR",
+        "MUSIC_DIR",
+        "CONVERT_THREADS",
+        "CONVERT_CRF",
+        "CONVERT_PRESET",
+        "CONVERT_AUDIO_BITRATE",
+        "FFMPEG_BIN",
+        "FFPROBE_BIN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    cfg = Config.from_env()
+    assert cfg.films_dir.as_posix() == "/volume1/video/Films"
+    assert cfg.music_dir.as_posix() == "/volume1/video/Muziek"
+    assert cfg.convert_threads == 2
+    assert cfg.convert_crf == 20
+    assert cfg.convert_preset == "veryfast"
+    assert cfg.convert_audio_bitrate == 192
+
+
+def test_converter_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("FILMS_DIR", str(tmp_path / "films"))
+    monkeypatch.setenv("MUSIC_DIR", str(tmp_path / "music"))
+    monkeypatch.setenv("CONVERT_THREADS", "4")
+    monkeypatch.setenv("CONVERT_CRF", "18")
+    monkeypatch.setenv("CONVERT_PRESET", "fast")
+    monkeypatch.setenv("CONVERT_AUDIO_BITRATE", "256")
+    cfg = Config.from_env()
+    assert cfg.convert_threads == 4
+    assert cfg.convert_crf == 18
+    assert cfg.convert_preset == "fast"
+    assert cfg.convert_audio_bitrate == 256
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("FILMS_DIR", "relative"),
+        ("MUSIC_DIR", "/"),
+        ("CONVERT_THREADS", "0"),
+        ("CONVERT_THREADS", "17"),
+        ("CONVERT_CRF", "0"),
+        ("CONVERT_CRF", "52"),
+        ("CONVERT_PRESET", "placebo"),
+        ("CONVERT_AUDIO_BITRATE", "32"),
+    ],
+)
+def test_converter_invalid(monkeypatch, key, value):
+    monkeypatch.setenv(key, value)
+    with pytest.raises(ConfigError):
+        Config.from_env()
+
+
+def test_media_dirs_must_be_distinct_and_not_nested(monkeypatch, tmp_path):
+    monkeypatch.setenv("FILMS_DIR", str(tmp_path / "media"))
+    monkeypatch.setenv("MUSIC_DIR", str(tmp_path / "media"))
+    with pytest.raises(ConfigError, match="verschillende"):
+        Config.from_env()
+    monkeypatch.setenv("MUSIC_DIR", str(tmp_path / "media" / "music"))
+    with pytest.raises(ConfigError, match="in elkaar"):
+        Config.from_env()
