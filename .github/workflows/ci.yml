@@ -22,7 +22,7 @@ jobs:
         run: |
           python -m pip install -r requirements-dev.txt
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y --no-install-recommends ffmpeg gddrescue
       - name: Lint Python
         run: |
           ruff check app tests
@@ -49,6 +49,9 @@ jobs:
           curl --fail --silent http://127.0.0.1:18080/api/media
           docker exec dvd-smoke ffmpeg -version
           docker exec dvd-smoke ffprobe -version
+          docker exec dvd-smoke ddrescue --version
+          docker cp tests/fixtures/ddrescue-1.29-finished.mapfile dvd-smoke:/tmp/finished.mapfile
+          docker exec dvd-smoke python3 -c 'from pathlib import Path; from app.image import _mapfile_stats; expected = 0x117108000; assert _mapfile_stats(Path("/tmp/finished.mapfile"), expected) == (expected, 0)'
           docker logs dvd-smoke
           docker stop dvd-smoke
       - name: Integration-test real read-only mounts

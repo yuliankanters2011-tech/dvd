@@ -1,0 +1,9 @@
+# Mapfile. Created by GNU ddrescue version 1.29
+# Command line: ddrescue -n -b 2048 /dev/sr0 /srv/dvd/library/.KNIGHT_RIDER-d48e0a7b9c.iso.partial /var/lib/dvd/KNIGHT_RIDER-d48e0a7b9c.mapfile
+# Start time:   2026-11-14 22:00:06
+# Current time: 2026-11-14 22:05:10
+# Finished
+# current_pos  current_status  current_pass
+0x117100000     +               1
+#      pos        size  status
+0x00000000  0x117108000  +

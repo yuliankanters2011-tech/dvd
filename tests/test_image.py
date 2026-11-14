@@ -1,10 +1,14 @@
 import json
 import threading
+from pathlib import Path
 
 import pytest
 
 from app import image
 from app.drive import DiscInfo, safe_disc_name
+
+FIXTURES = Path(__file__).parent / "fixtures"
+STATE_LINE = "# current_pos  current_status  current_pass\n0x0000 ?\n"
 
 
 def make_disc(tmp_path, size=4096):
@@ -35,7 +39,14 @@ def fake_ddrescue(monkeypatch, device, *, missing=0, returncode=0, truncate=0, s
                     out.truncate(len(data))
                 else:
                     out.write(data)
-            lines = []
+            # GNU ddrescue writes a state line before the actual data blocks.
+            status = "+" if not missing and not truncate else "?"
+            lines = [
+                "# Mapfile. Created by GNU ddrescue version 1.29\n",
+                "# current_pos  current_status  current_pass\n",
+                f"0x{len(data):08x}     {status}               1\n",
+                "#      pos        size  status\n",
+            ]
             if good > 0:
                 lines.append(f"0x0000 0x{good:x} +\n")
             if missing > 0:
@@ -55,14 +66,80 @@ def fake_ddrescue(monkeypatch, device, *, missing=0, returncode=0, truncate=0, s
 
 def test_mapfile_stats_and_complete(tmp_path):
     path = tmp_path / "test.mapfile"
-    path.write_text("# comment\n0x0000 0x1000 +\n0x1000 0x1000 +\n")
+    path.write_text(STATE_LINE + "0x0000 0x1000 +\n0x1000 0x1000 +\n")
     assert image._mapfile_stats(path, 0x2000) == (0x2000, 0)
     assert image._mapfile_complete(path, 0x2000)
-    path.write_text("0x0000 0x1000 +\n0x1000 0x1000 *\n")
+    path.write_text(STATE_LINE + "0x0000 0x1000 +\n0x1000 0x1000 *\n")
     assert image._mapfile_stats(path, 0x2000) == (0x1000, 0x1000)
     assert not image._mapfile_complete(path, 0x2000)
     assert not image._mapfile_complete(path, 0x1000)
     assert not image._mapfile_complete(tmp_path / "missing", 1)
+
+
+def test_ddrescue_129_finished_mapfile_is_complete():
+    """Regression: a fully rescued disc has a state line, not only blocks."""
+    path = FIXTURES / "ddrescue-1.29-finished.mapfile"
+    expected = 0x117108000
+    assert image._mapfile_stats(path, expected) == (expected, 0)
+    assert image._mapfile_complete(path, expected)
+    assert image._mapfile_rescued(path, expected) == expected
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "0x0000 +",  # two fields: pass defaults to 1
+        "0x2000 ?",  # position at the end of the disc
+        "0x1800 * 3",  # later pass, inside an unreadable block
+        "0x3000 / 2",  # metadata position beyond the covered blocks
+        "0x1000 - 12",
+        "0 + 2",  # decimal notation
+    ],
+)
+def test_mapfile_state_is_metadata_not_a_data_block(tmp_path, state):
+    path = tmp_path / "state.mapfile"
+    path.write_text(
+        "# Mapfile. Created by GNU ddrescue version 1.29\n\n"
+        f"# current_pos  current_status  current_pass\n{state}\n"
+        "#      pos        size  status\n"
+        "0x0000 0x0800 +\n0x0800 0x0800 -\n"
+    )
+    assert image._mapfile_stats(path, 0x1000) == (0x800, 0x800)
+    assert not image._mapfile_complete(path, 0x1000)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "",  # a bare block list is not a GNU ddrescue mapfile
+        "0x0000",
+        "0x0000 + 1 extra",
+        "straks +",
+        "-0x1000 +",
+        "0x0000 X",
+        "0x0000 + 0",
+        "0x0000 + -1",
+        "0x0000 + 1.5",
+        "0x0000 + 0x2",
+        "0x0000 + later",
+    ],
+)
+def test_mapfile_rejects_invalid_state_line(tmp_path, state):
+    path = tmp_path / "bad-state.mapfile"
+    path.write_text(f"# comment\n{state}\n0x0000 0x1000 +\n")
+    with pytest.raises(image.ImageError, match="statusregel"):
+        image._mapfile_stats(path, 0x1000)
+
+
+def test_mapfile_accepts_inline_domain_annotations(tmp_path):
+    path = tmp_path / "annotated.mapfile"
+    path.write_text(
+        "# current_pos  current_status  current_pass\n"
+        "0x1000     +               1\t#  4096B\n"
+        "#      pos        size  status\n"
+        "0x0000 0x1000 +\t#         0B      4096B\n"
+    )
+    assert image._mapfile_stats(path, 0x1000) == (0x1000, 0)
 
 
 @pytest.mark.parametrize(
@@ -72,12 +149,13 @@ def test_mapfile_stats_and_complete(tmp_path):
         "0x0000 0x0800 +\n0x1000 0x0800 +\n",  # gap
         "0x0000 0x1000 X\n",  # unknown status
         "0x0000 0x2000 +\n",  # past end
-        "niet een getal\n",
+        "0x0000 onleesbaar +\n",  # invalid block number
+        "0x0000 0x1000 + extra\n",  # too many block fields
     ],
 )
 def test_mapfile_rejects_unsafe_coverage(tmp_path, text):
     path = tmp_path / "bad.mapfile"
-    path.write_text(text)
+    path.write_text(STATE_LINE + text)
     with pytest.raises(image.ImageError):
         image._mapfile_stats(path, 0x1000)
 
@@ -85,7 +163,9 @@ def test_mapfile_rejects_unsafe_coverage(tmp_path, text):
 def test_mapfile_accepts_all_ddrescue_statuses(tmp_path):
     path = tmp_path / "statuses.mapfile"
     path.write_text(
-        "0x0000 0x0200 +\n0x0200 0x0200 *\n0x0400 0x0200 /\n0x0600 0x0200 -\n0x0800 0x0800 ?\n"
+        STATE_LINE
+        + "0x0000 0x0200 +\n0x0200 0x0200 *\n0x0400 0x0200 /\n"
+        + "0x0600 0x0200 -\n0x0800 0x0800 ?\n"
     )
     assert image._mapfile_stats(path, 0x1000) == (0x200, 0xE00)
 
@@ -165,7 +245,12 @@ def test_cancel_keeps_partial_and_resume_completes(tmp_path, monkeypatch):
             library.mkdir(parents=True, exist_ok=True)
             state.mkdir(parents=True, exist_ok=True)
             partial.write_bytes(b"A" * 2048)
-            mapfile.write_text("0x0000 0x0800 +\n0x0800 0x0800 ?\n")
+            mapfile.write_text(
+                "# current_pos  current_status  current_pass\n"
+                "0x0800     ?               1\n"
+                "#      pos        size  status\n"
+                "0x0000 0x0800 +\n0x0800 0x0800 ?\n"
+            )
             self.pid = 999999
             stop.set()
 
