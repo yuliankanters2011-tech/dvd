@@ -24,6 +24,10 @@ class CopyError(RuntimeError):
     pass
 
 
+class CopyCancelledError(CopyError):
+    """The user/service stopped copying; this is not a disc failure."""
+
+
 @dataclass(frozen=True)
 class CopyResult:
     destination: Path
@@ -114,7 +118,9 @@ def import_disc(
         _owned(staging, puid, pgid, True)
         for directory, dirs, filenames in os.walk(source, followlinks=False):
             if stop.is_set():
-                raise CopyError("Import afgebroken omdat de container stopt")
+                raise CopyCancelledError(
+                    "Kopiëren geannuleerd. De onvoltooide importmap is verwijderd."
+                )
             relative = Path(directory).relative_to(source)
             out_dir = staging / relative
             out_dir.mkdir(mode=0o755, exist_ok=True)
@@ -128,7 +134,9 @@ def import_disc(
             dirs[:] = keep_dirs
             for filename in filenames:
                 if stop.is_set():
-                    raise CopyError("Import afgebroken omdat de container stopt")
+                    raise CopyCancelledError(
+                        "Kopiëren geannuleerd. De onvoltooide importmap is verwijderd."
+                    )
                 src = Path(directory) / filename
                 mode = src.lstat().st_mode
                 if not stat.S_ISREG(mode):
@@ -141,7 +149,9 @@ def import_disc(
                 with src.open("rb") as reader, dst.open("xb") as writer:
                     while chunk := reader.read(CHUNK):
                         if stop.is_set():
-                            raise CopyError("Import afgebroken omdat de container stopt")
+                            raise CopyCancelledError(
+                                "Kopiëren geannuleerd. De onvoltooide importmap is verwijderd."
+                            )
                         writer.write(chunk)
                         copied += len(chunk)
                         now = time.monotonic()

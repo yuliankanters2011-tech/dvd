@@ -8,6 +8,7 @@ DEVICE=${DEVICE:-}
 WEB_PORT=${WEB_PORT:-8080}
 COPY_FILES=${COPY_FILES:-false}
 AUTO_EJECT=${AUTO_EJECT:-false}
+ISO_MAX_MISSING_PERCENT=${ISO_MAX_MISSING_PERCENT:-0.5}
 MEDIA_ROOT=${MEDIA_ROOT:-/volume1/video}
 WRITE_ENV=1
 
@@ -57,6 +58,12 @@ if ! [[ $WEB_PORT =~ ^[0-9]+$ ]] || (( WEB_PORT < 1024 || WEB_PORT > 65535 )); t
 fi
 [[ $COPY_FILES == true || $COPY_FILES == false ]] || fail "COPY_FILES moet true of false zijn"
 [[ $AUTO_EJECT == true || $AUTO_EJECT == false ]] || fail "AUTO_EJECT moet true of false zijn"
+if ! [[ $ISO_MAX_MISSING_PERCENT =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    fail "ISO_MAX_MISSING_PERCENT moet een getal van 0 t/m 100 zijn"
+fi
+if ! awk -v n="$ISO_MAX_MISSING_PERCENT" 'BEGIN { exit !(n >= 0 && n <= 100) }'; then
+    fail "ISO_MAX_MISSING_PERCENT moet een getal van 0 t/m 100 zijn"
+fi
 
 command -v docker >/dev/null || fail "Docker/Container Manager is niet geïnstalleerd"
 if docker compose version >/dev/null 2>&1; then
@@ -144,6 +151,7 @@ PGID=$PGID
 POLL_SECONDS=5
 COPY_FILES=$COPY_FILES
 AUTO_EJECT=$AUTO_EJECT
+ISO_MAX_MISSING_PERCENT=$ISO_MAX_MISSING_PERCENT
 IMAGE_NAME=${IMAGE_NAME:-ghcr.io/yuliankanters2011-tech/dvd}
 IMAGE_TAG=${IMAGE_TAG:-latest}
 FILMS_PATH=$FILMS_PATH

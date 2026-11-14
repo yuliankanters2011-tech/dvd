@@ -53,10 +53,18 @@
         <div class="progress hidden" id="copy-progress">
           <div class="progress-label"><span id="copy-label">Kopiëren…</span><span id="copy-percent">0%</span></div>
           <progress id="copy-bar" max="100" value="0"></progress>
+          <p class="action-feedback" id="copy-feedback" aria-live="polite"></p>
+          <button class="button ghost hidden" id="cancel-copy" type="button">Kopiëren annuleren</button>
         </div>
         <div class="progress hidden" id="image-progress">
-          <div class="progress-label"><span>ISO maken…</span><span id="image-percent">0%</span></div>
+          <div class="progress-label"><span id="image-label">ISO maken…</span><span id="image-percent">0%</span></div>
           <progress id="image-bar" max="100" value="0"></progress>
+          <p class="action-feedback" id="image-feedback" aria-live="polite"></p>
+          <p class="progress-meta" id="image-meta"></p>
+          <div class="actions">
+            <button class="button ghost hidden" id="cancel-iso" type="button">ISO annuleren</button>
+            <button class="button warning hidden" id="force-iso" type="button">Toch doorgaan</button>
+          </div>
         </div>
       </div>
     </section>

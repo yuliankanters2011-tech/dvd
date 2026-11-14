@@ -10,8 +10,9 @@ Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest e
 - Automatisch aankoppelen na het inwerpen van een schijf.
 - Live, alleen-lezen map: `/volume1/dvd/disc`.
 - Optioneel automatisch kopiëren naar `/volume1/dvd/library`.
-- Webdashboard met status, kopieerknop, ISO-knop, lade sluiten en uitwerpen.
+- Webdashboard met status, kopieerknop, ISO-knop, annuleerknoppen, lade sluiten en uitwerpen.
 - ISO-bestanden die je in DSM File Station als virtuele schijf kunt aankoppelen.
+- Licht beschadigde ISO's worden toch opgeslagen; bij zware schade verschijnt **Toch doorgaan**. Een geannuleerde ISO kan later worden hervat.
 - **VIDEO_TS naar MP4**: kies een titel uit de dvd of een losse `.ts`/`.vob`/`.mpg`/`.mpeg` uit de NAS-bibliotheek.
 - Twee vaste Jellyfin-bestemmingen: **Films** (H.264 + AAC) en **Muziek** (alleen AAC-geluid in MP4).
 - Voortgang, annuleren, hervatten via idempotente markers en nooit bestaande bestanden overschrijven.
@@ -29,7 +30,15 @@ Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest e
 
 Synology ondersteunt extern optische media niet op alle modellen. Controleer daarom eerst of de NAS `/dev/sr0` aanmaakt. Zie de Synology-communitymelding over usb-dvd-spelers: <https://community.synology.com/enu/forum/1/post/153115>.
 
-## Snel starten (SSH)
+## Snel starten (SSH, zonder Compose)
+
+De aanbevolen route voor deze NAS gebruikt alleen `docker run`, met hostpoort **8085**. De volledige kant-en-klare commando's staan in [docs/synology-setup.md](docs/synology-setup.md#installeren-via-ssh-zonder-compose). Je hebt daar geen compose-bestand voor nodig.
+
+```text
+http://<NAS-IP>:8085
+```
+
+De oudere Compose-route hieronder blijft bestaan voor wie Container Manager-projecten gebruikt, maar is niet nodig voor de SSH-installatie.
 
 ### 1. Maak de gedeelde map in DSM
 
@@ -54,7 +63,7 @@ ls -l /dev/sr*
 
 Je moet iets als `/dev/sr0` zien. Zie je niets, controleer dan de usb-kabel/voeding en `dmesg | tail -50`.
 
-### 4. Bereid de host voor en start
+### 4. Bereid de host voor en start (optionele Compose-route)
 
 ```bash
 sudo bash scripts/prepare-host.sh
@@ -169,6 +178,7 @@ Zie [docs/dockerhub.md](docs/dockerhub.md). Kort gezegd:
 | `POLL_SECONDS` | `5` | Interval voor schijfdetectie |
 | `COPY_FILES` | `false` | Nieuwe schijven automatisch kopiëren naar `library` |
 | `AUTO_EJECT` | `false` | Uitwerpen na geslaagde automatische kopie of live-dvd-conversie |
+| `ISO_MAX_MISSING_PERCENT` | `0.5` | Percentage onleesbare bytes dat automatisch in een ISO mag blijven (0–100). Meer schade vraagt **Toch doorgaan** |
 | `FILMS_PATH` | `/volume1/video/Films` | Hostmap voor Jellyfin-films |
 | `MUSIC_PATH` | `/volume1/video/Muziek` | Hostmap voor Jellyfin-muziek |
 | `CONVERT_THREADS` | `2` | FFmpeg-threads (1–16); lager houdt de NAS responsiever |
@@ -188,6 +198,16 @@ sudo docker compose up -d --build
 ```
 
 Handmatig kopiëren of een ISO maken kan ook via het dashboard. Een ISO kun je daarna in File Station kiezen via **Hulpmiddelen → Virtueel station aankoppelen**. Synology documenteert dit voor ISO 9660/UDF-images: <https://kb.synology.com/en-global/DSM/help/FileStation/mountiso?version=7>.
+
+### ISO van een beschadigde schijf
+
+GNU ddrescue leest de schijf in een verborgen `.partial`-bestand met een mapfile:
+
+1. **Kleine schade** (standaard ≤ 0,5% onleesbaar): de ISO wordt automatisch opgeslagen. De naastgelegen `.dvd-bridge.json` vermeldt `partial: true`, het aantal onleesbare bytes en het percentage.
+2. **Zware schade**: het dashboard toont **Toch doorgaan**. Kies dit alleen als je bewust een beschadigde ISO wilt bewaren; bestanden kunnen onvolledig zijn. De ISO en marker vertellen dat het resultaat beschadigd is.
+3. **Annuleren**: het deelresultaat en de mapfile blijven bewaard. Plaats dezelfde schijf terug en klik **ISO hervatten** om verder te gaan waar het stopte.
+
+De tolerantie stel je in met `ISO_MAX_MISSING_PERCENT` (0–100, standaard 0.5). Bij een losse `docker run`-installatie voeg je `-e ISO_MAX_MISSING_PERCENT=0.5` toe. Bestaande ISO's en markers worden nooit overschreven.
 
 ## Na een NAS-herstart
 
@@ -233,7 +253,7 @@ sudo docker compose logs --tail=100 dvd
 - De originele schijf wordt altijd met `ro,nosuid,nodev,noexec` aangekoppeld.
 - Kopiëren schrijft eerst naar een verborgen staging-map en publiceert die pas na voltooiing. Bestaande imports worden niet overschreven.
 - Symlinks, apparaatbestanden en FIFO's op de schijf worden overgeslagen bij kopiëren.
-- ISO-maken gebruikt GNU ddrescue en bewaart geen partieel resultaat als er onleesbare blokken zijn.
+- ISO-maken gebruikt GNU ddrescue. Een beetje schade (standaard maximaal 0,5%) wordt automatisch opgeslagen en gemarkeerd in de naastgelegen `.json`. Bij zware schade kies je bewust **Toch doorgaan**; de ISO blijft dan gemarkeerd als beschadigd. Annuleren bewaart het verborgen deelresultaat plus mapfile om later te hervatten. Bestaande ISO's worden nooit overschreven.
 - De converter accepteert alleen bron-id's uit de vaste bronnenlijst en schrijft alleen naar de twee gekoppelde Jellyfin-mappen. FFmpeg wordt zonder shell aangestuurd.
 - MP4-publicatie gebeurt met een harde link die faalt als het doel al bestaat. De marker wordt apart gepubliceerd; bij een markerfout wordt de nieuwe MP4 teruggedraaid.
 - CSS wordt niet omzeild. DVD-Audio, menu's en shuffle-titels geven een uitleg in plaats van een stille mislukking.

@@ -171,3 +171,30 @@ def test_close_and_cancel_commands(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         post_json(httpd, "/api/command", {"command": "cancel"})
     assert exc.value.code == 409
+
+
+def test_image_and_copy_cancel_commands(server):
+    httpd, service = server
+    for command in ("cancel_iso", "cancel_copy"):
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            post_json(httpd, "/api/command", {"command": command})
+        assert exc.value.code == 409
+    service.update(image_state="working")
+    with post_json(httpd, "/api/command", {"command": "cancel_iso"}) as response:
+        assert response.status == 202
+    assert service._image_stop.is_set()
+    service.update(copy_state="copying")
+    with post_json(httpd, "/api/command", {"command": "cancel_copy"}) as response:
+        assert response.status == 202
+    assert service._copy_stop.is_set()
+
+
+def test_iso_force_requires_damage_prompt(server):
+    httpd, service = server
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/command", {"command": "iso_force"})
+    assert exc.value.code == 409
+    service.update(image_state="error", image_force_available=True)
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/command", {"command": "iso_force"})
+    assert exc.value.code == 409  # no mounted disc in this fixture

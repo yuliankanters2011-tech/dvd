@@ -27,6 +27,7 @@ def test_compose_jellyfin_mounts_and_converter_env():
         assert env["CONVERT_CRF"] == "${CONVERT_CRF:-20}"
         assert env["CONVERT_PRESET"] == "${CONVERT_PRESET:-veryfast}"
         assert env["CONVERT_AUDIO_BITRATE"] == "${CONVERT_AUDIO_BITRATE:-192}"
+        assert env["ISO_MAX_MISSING_PERCENT"] == "${ISO_MAX_MISSING_PERCENT:-0.5}"
         films = next(
             v
             for v in svc["volumes"]
