@@ -10,7 +10,7 @@ Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest e
 - Automatisch aankoppelen na het inwerpen van een schijf.
 - Live, alleen-lezen map: `/volume1/dvd/disc`.
 - Optioneel automatisch kopiëren naar `/volume1/dvd/library`.
-- Webdashboard met status, kopieerknop, ISO-knop, annuleerknoppen, lade sluiten en uitwerpen.
+- Webdashboard met status, kopieerknop, ISO-knop, annuleerknoppen, lade sluiten en uitwerpen. Vanaf **1.2.9** met een duidelijke CSS-blokkade (uitgeschakelde knoppen + reden), minder geflikker, betere laad-/leeg-/foutmeldingen, een snellere bronnenlijst en een mobiele, toegankelijke layout.
 - Slaapstand voor de usb-speler met handmatige knop en instelbare inactiviteitstimer, plus een slider om de draaisnelheid aan te vragen. Beide zijn best-effort: de usb-voeding blijft aan en niet elke speler/usb-brug ondersteunt de commando's.
 - ISO-bestanden die je in DSM File Station als virtuele schijf kunt aankoppelen.
 - Licht beschadigde ISO's worden toch opgeslagen; bij zware schade verschijnt **Toch doorgaan**. Een geannuleerde ISO kan later worden hervat.
@@ -228,6 +228,8 @@ Versie **1.2.6** voegt de keuze “Alle ondersteunde titels in één MP4” toe 
 
 Versie **1.2.8** herkent CSS-beveiligde dvd's via de copyright-informatie van de speler, een begrensde controle van VOB-sectorkoppen en de kernel-sense `0x5 / 6F / 03`. Het dashboard en de logs tonen: **“Deze dvd is CSS-beveiligd. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video.”** Kopiëren, ISO maken en omzetten van zo'n live schijf worden vroeg geweigerd; onbeveiligde DVD-Video, gegevensschijven en losse videobestanden blijven werken.
 
+Versie **1.2.9** verbetert het dashboard zelf: een duidelijke CSS-blokkade met uitgeschakelde knoppen en een reden per knop, minder geflikker doordat status en bronnenlijst alleen gewijzigde teksten/keuzelijsten bijwerken, betere laad-, leeg- en foutmeldingen, een snellere bronnenlijst met debounce en caching, en een mobiele layout met zichtbare focus en labels. **ISO maken ontgrendelt of ontsleutelt niets**; een CSS-beveiligde dvd wordt ook als ISO geweigerd. De CSS-detectie en alle bestaande import-, ISO-, marker- en slaapfuncties blijven ongewijzigd. Werk bij naar **1.2.9** en klik **Bronnen verversen**.
+
 Versie **1.2.7** voegt **Slaapstand & draaisnelheid** toe: een handmatige slaap/wakker-knop, een instelbare automatische slaaptimer en een slider om de draaisnelheid van de usb-speler aan te vragen. Tijdens slaapstand pauzeert DVD Bridge de spelercontroles; de usb-voeding blijft aan en het stopcommando is best-effort. De bestaande import, ISO's en markers blijven ongewijzigd.
 
 ## Slaapstand en draaisnelheid
@@ -309,9 +311,13 @@ ruff format --check app tests
 python3 -m pytest
 shellcheck scripts/*.sh
 docker compose config --quiet
+# Dashboard (DOM-tests met jsdom, geen browser of schijf nodig):
+npm ci --ignore-scripts
+npm run check
+npm test
 ```
 
-CI draait unit-tests, lint, Compose-validatie, een dashboard-smoke-test, echte FFmpeg-conversies op synthetische TS/VOB/VIDEO_TS-media, echte ddrescue-tests op een tijdelijk schijfbestand en echte read-only ISO9660/UDF-loopmounttests. De smoke-test controleert ook een echt ddrescue 1.29-kaartbestand in de containerimage. De hardware-specifieke Synology-stappen moeten uiteindelijk op je eigen NAS worden gecontroleerd.
+CI draait unit-tests, lint, Compose-validatie, een dashboard-smoke-test, echte FFmpeg-conversies op synthetische TS/VOB/VIDEO_TS-media, echte ddrescue-tests op een tijdelijk schijfbestand en echte read-only ISO9660/UDF-loopmounttests. Een aparte `dashboard`-job draait de jsdom-DOM-tests (`tests/web/`) die het renderen, de CSS-blokkade, polling/debounce, foutafhandeling en de mobiele/toegankelijke markup controleren; de image-job wacht op beide. De smoke-test controleert ook een echt ddrescue 1.29-kaartbestand in de containerimage. De hardware-specifieke Synology-stappen moeten uiteindelijk op je eigen NAS worden gecontroleerd.
 
 Lokaal worden de FFmpeg-conversietests overgeslagen als `ffmpeg`/`ffprobe` niet in `PATH` staan. Installeer ze bijvoorbeeld met `sudo apt-get install ffmpeg` of `brew install ffmpeg`. De ddrescue-integratietests worden overgeslagen als `ddrescue` ontbreekt; installeer dat met `sudo apt-get install gddrescue` of `brew install ddrescue`.
 

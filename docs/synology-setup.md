@@ -54,7 +54,9 @@ Open `http://<NAS-IP>:8085`. De containerpoort blijft 8080; alleen de NAS-poort 
 
 ## Updaten zonder Compose
 
-Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.8**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
+Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.9**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
+
+Versie **1.2.9** verbetert het dashboard: een duidelijke CSS-blokkade met uitgeschakelde knoppen en een reden per knop, minder geflikker, betere laad-/leeg-/foutmeldingen, een snellere bronnenlijst (debounce + caching) en een mobiele, toegankelijke layout. **ISO maken ontgrendelt of ontsleutelt niets**; een CSS-beveiligde dvd wordt ook als ISO geweigerd. De CSS-detectie en alle import-, ISO-, marker- en slaapfuncties blijven ongewijzigd.
 
 Versie **1.2.8** herkent CSS-beveiligde dvd's en toont vroeg: **“Deze dvd is CSS-beveiligd. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video.”** Kopiëren, ISO maken en omzetten van zo'n live schijf worden geweigerd voordat een lange leespoging begint. De melding staat ook in `/api/status`, `/api/media` (`skipped_sources`) en de containerlogs. Er wordt geen CSS-ontsleuteling toegevoegd.
 
@@ -103,7 +105,7 @@ printf '\n'
 sudo docker exec dvd-bridge python3 -c 'from app import __version__; print("DVD Bridge versie:", __version__)'
 ```
 
-Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.8` te staan.
+Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.9` te staan.
 
 ## Bestandssystemen
 
