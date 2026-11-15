@@ -74,3 +74,16 @@ def test_dockerhub_workflow_requires_secrets():
     assert "DOCKERHUB_USERNAME" in text
     assert "DOCKERHUB_TOKEN" in text
     assert "docker.io" in text
+
+
+def test_ci_runs_dashboard_dom_tests_before_publishing():
+    data = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    jobs = data["jobs"]
+    assert "dashboard" in jobs
+    steps = jobs["dashboard"]["steps"]
+    text = "\n".join(str(step.get("run", "")) + str(step.get("with", "")) for step in steps)
+    assert "npm ci" in text
+    assert "npm test" in text
+    assert "npm run check" in text
+    # The image job must wait for both the Python and dashboard suites.
+    assert set(jobs["image"]["needs"]) == {"test", "dashboard"}

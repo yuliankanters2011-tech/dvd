@@ -13,3 +13,4 @@ library/
 !tests/fixtures/*.mapfile
 *.log
 .DS_Store
+node_modules/

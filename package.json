@@ -1,0 +1,12 @@
+{
+  "name": "dvd-bridge-dashboard-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check web/app.js",
+    "test": "node --test tests/web/*.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

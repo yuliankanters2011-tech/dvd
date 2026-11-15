@@ -1,13 +1,15 @@
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
+from html.parser import HTMLParser
 
 import pytest
 
 from app.config import Config
 from app.service import Service
-from app.web import DashboardServer
+from app.web import WEB_ROOT, DashboardServer
 
 
 @pytest.fixture()
@@ -315,3 +317,134 @@ def test_css_status_and_command_refusal(server):
             post_json(httpd, "/api/command", {"command": command})
         assert exc.value.code == 409
         assert "CSS-beveiligd" in json.load(exc.value)["error"]
+
+
+class _DashboardParser(HTMLParser):
+    """Collect the ids, labels and describedby targets the dashboard relies on."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.ids: set[str] = set()
+        self.describedby: set[str] = set()
+        self.label_for: set[str] = set()
+        self.inline_events: list[str] = []
+        self.inline_styles: list[str] = []
+        self.scripts: list[dict[str, str]] = []
+        self.buttons: list[dict[str, str]] = []
+        self.lang = ""
+        self.viewport = False
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "html":
+            self.lang = attributes.get("lang", "")
+        if "id" in attributes:
+            self.ids.add(attributes["id"])
+        for target in attributes.get("aria-describedby", "").split():
+            self.describedby.add(target)
+        if tag == "label" and "for" in attributes:
+            self.label_for.add(attributes["for"])
+        for name in attributes:
+            if name.startswith("on"):
+                self.inline_events.append(name)
+        if "style" in attributes:
+            self.inline_styles.append(attributes["style"])
+        if tag == "script":
+            self.scripts.append(attributes)
+        if tag == "button":
+            self.buttons.append(attributes)
+        if tag == "meta" and attributes.get("name") == "viewport":
+            self.viewport = "width=device-width" in attributes.get("content", "")
+
+
+def _parsed_dashboard() -> _DashboardParser:
+    parser = _DashboardParser()
+    parser.feed((WEB_ROOT / "index.html").read_text(encoding="utf-8"))
+    return parser
+
+
+def test_static_assets_served_with_security_headers(server):
+    httpd, _ = server
+    expected = {
+        "/": "text/html; charset=utf-8",
+        "/app.js": "text/javascript; charset=utf-8",
+        "/style.css": "text/css; charset=utf-8",
+        "/favicon.svg": "image/svg+xml",
+    }
+    for path, content_type in expected.items():
+        with urllib.request.urlopen(url(httpd, path)) as response:
+            assert response.status == 200
+            assert response.headers["Content-Type"] == content_type
+            assert response.headers["Cache-Control"] == "no-store"
+            assert response.headers["X-Content-Type-Options"] == "nosniff"
+            assert response.headers["X-Frame-Options"] == "DENY"
+            csp = response.headers["Content-Security-Policy"]
+            assert "unsafe-inline" not in csp
+            assert "script-src 'self'" in csp
+            assert response.read()
+
+
+def test_dashboard_markup_accessibility_contract():
+    parser = _parsed_dashboard()
+    assert parser.lang == "nl"
+    assert parser.viewport
+    # Every aria-describedby target must exist as an id in the document.
+    assert parser.describedby <= parser.ids
+    # The controls the JS drives must be present.
+    required = {
+        "protection-banner",
+        "action-reason",
+        "iso-help",
+        "source-status",
+        "convert-reason",
+        "connection-label",
+        "convert-source",
+        "convert-title",
+        "convert-button",
+        "cancel-convert",
+        "refresh-sources",
+        "drive-speed",
+        "sleep-idle",
+        "copy-button",
+        "iso-button",
+    }
+    assert required <= parser.ids
+    # No inline handlers or styles: the CSP forbids them.
+    assert parser.inline_events == []
+    assert parser.inline_styles == []
+    # Scripts are external only.
+    assert parser.scripts and all("src" in s for s in parser.scripts)
+    # Buttons declare a type so they never submit anything implicitly.
+    assert parser.buttons and all(b.get("type") == "button" for b in parser.buttons)
+    # Range and select controls have explicit labels.
+    assert {"drive-speed", "sleep-idle"} <= parser.label_for
+
+
+def test_dashboard_js_references_only_existing_ids():
+    parser = _parsed_dashboard()
+    script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+    referenced = set(re.findall(r"\$\(\"([a-z0-9-]+)\"\)", script))
+    assert referenced
+    assert referenced <= parser.ids, referenced - parser.ids
+    # The hardened rendering helpers must be in place (no innerHTML / setInterval).
+    assert "innerHTML" not in script
+    assert "setInterval" not in script
+    assert "AbortController" in script
+
+
+def test_dashboard_css_has_mobile_and_focus_rules():
+    css = (WEB_ROOT / "style.css").read_text(encoding="utf-8")
+    assert "focus-visible" in css
+    assert "prefers-reduced-motion" in css
+    assert "@media (max-width: 760px)" in css
+    assert "@media (max-width: 480px)" in css
+    assert ".protection-banner" in css
+    assert ".action-reason" in css
+
+
+def test_iso_help_states_no_decryption(server):
+    httpd, _ = server
+    with urllib.request.urlopen(url(httpd, "/")) as response:
+        html = response.read().decode("utf-8")
+    assert "ISO maken ontgrendelt of ontsleutelt niets" in html
+    assert "CSS-beveiligde dvd's worden geweigerd" in html

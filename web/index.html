@@ -16,7 +16,7 @@
         <span class="brand-mark" aria-hidden="true"><span></span></span>
         <span>DVD <strong>Bridge</strong></span>
       </a>
-      <span class="connection" id="connection"><span class="dot"></span> Verbinden…</span>
+      <span class="connection" id="connection" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="connection-label">Verbinden…</span></span>
     </header>
 
     <section class="hero" aria-labelledby="page-title">
@@ -36,6 +36,11 @@
         </div>
         <h2 id="status-title">De speler wordt gecontroleerd…</h2>
         <p id="status-message" class="status-message" role="status" aria-live="polite">Even geduld.</p>
+        <div id="protection-banner" class="protection-banner hidden" role="alert">
+          <strong>CSS-beveiligde dvd</strong>
+          <p>Deze dvd is CSS-beveiligd. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video.</p>
+          <p class="protection-note">ISO maken ontgrendelt of ontsleutelt niets. Een bruikbare ISO van deze CSS-dvd is daarom niet beschikbaar. Uitwerpen, lade sluiten en slaapstand blijven werken.</p>
+        </div>
         <dl class="details">
           <div><dt>Schijf</dt><dd id="disc-label">—</dd></div>
           <div><dt>Formaat</dt><dd id="disc-format">—</dd></div>
@@ -43,13 +48,15 @@
           <div><dt>Apparaat</dt><dd id="device">—</dd></div>
         </dl>
         <div class="actions">
-          <button class="button primary" id="copy-button" type="button">Bestanden kopiëren</button>
-          <button class="button" id="iso-button" type="button">ISO maken</button>
+          <button class="button primary" id="copy-button" type="button" aria-describedby="action-reason">Bestanden kopiëren</button>
+          <button class="button" id="iso-button" type="button" aria-describedby="action-reason iso-help">ISO maken</button>
           <button class="button ghost" id="close-button" type="button">Lade sluiten</button>
           <button class="button ghost" id="eject-button" type="button">Uitwerpen</button>
           <button class="button ghost hidden" id="retry-button" type="button">Opnieuw proberen</button>
         </div>
+        <p class="action-reason" id="action-reason" aria-live="polite"></p>
         <p class="action-feedback" id="action-feedback" aria-live="polite"></p>
+        <p class="converter-help iso-help" id="iso-help">ISO maken kopieert de schijf zonder ontgrendeling of ontsleuteling. CSS-beveiligde dvd's worden geweigerd.</p>
         <div class="progress hidden" id="copy-progress">
           <div class="progress-label"><span id="copy-label">Kopiëren…</span><span id="copy-percent">0%</span></div>
           <progress id="copy-bar" max="100" value="0"></progress>
@@ -114,7 +121,10 @@
           <h2 id="converter-title">VIDEO_TS naar MP4</h2>
           <p>Kies een bron, titel en bestemming. Bestaande bestanden worden nooit overschreven.</p>
         </div>
-        <button class="button ghost" id="refresh-sources" type="button">Bronnen verversen</button>
+        <div class="converter-tools">
+          <button class="button ghost" id="refresh-sources" type="button" aria-describedby="source-status">Bronnen verversen</button>
+          <span class="source-status" id="source-status" role="status" aria-live="polite"></span>
+        </div>
       </div>
       <div class="converter-grid">
         <label>Bron
@@ -143,9 +153,10 @@
       <p class="source-note" id="source-note"></p>
       <p class="source-note warning hidden" id="source-warnings" role="status" aria-live="polite"></p>
       <div class="actions">
-        <button class="button primary" id="convert-button" type="button">Omzetten naar MP4</button>
+        <button class="button primary" id="convert-button" type="button" aria-describedby="convert-reason">Omzetten naar MP4</button>
         <button class="button ghost hidden" id="cancel-convert" type="button">Annuleren</button>
       </div>
+      <p class="action-reason" id="convert-reason" aria-live="polite"></p>
       <p class="action-feedback" id="convert-feedback" aria-live="polite"></p>
       <div class="progress hidden" id="convert-progress">
         <div class="progress-label"><span id="convert-label">Omzetten…</span><span id="convert-percent">0%</span></div>

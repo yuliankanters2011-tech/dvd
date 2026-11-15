@@ -62,8 +62,23 @@ jobs:
           sudo apt-get install -y --no-install-recommends genisoimage udftools
           sudo bash scripts/test-mount.sh
 
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dashboard test tools
+        run: npm ci --ignore-scripts
+      - name: Check dashboard JavaScript
+        run: npm run check
+      - name: Dashboard DOM tests
+        run: npm test
+
   image:
-    needs: test
+    needs: [test, dashboard]
     runs-on: ubuntu-latest
     permissions:
       contents: read
