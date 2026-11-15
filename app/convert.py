@@ -30,6 +30,7 @@ from pathlib import Path
 
 from . import dvd
 from .config import Config
+from .protection import CSS_NOTICE, is_css_sense
 
 LOG = logging.getLogger("dvd.convert")
 CHUNK = 1024 * 1024
@@ -285,7 +286,11 @@ def _feed(
             errors.append("FFmpeg sloot de invoer voortijdig")
     except OSError as exc:
         if not stop.is_set():
-            errors.append(f"Kan de bron niet lezen: {exc.strerror or exc}")
+            errors.append(
+                CSS_NOTICE
+                if is_css_sense(str(exc))
+                else f"Kan de bron niet lezen: {exc.strerror or exc}"
+            )
     finally:
         with contextlib.suppress(OSError):
             process.stdin.close()
@@ -506,6 +511,8 @@ def convert_title(
         raise ConvertError("Kies video of audio")
     if stop.is_set():
         raise ConvertError("Omzetten afgebroken")
+    if source.protected:
+        raise ConvertError(CSS_NOTICE)
     if not source.titles:
         raise ConvertError(source.note or "Deze bron bevat geen ondersteunde titels")
     title = source.title(title_number)

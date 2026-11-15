@@ -334,3 +334,48 @@ def test_all_titles_cancel_cleans_staging_and_partial(tmp_path, media, tools):
     assert not list(destination.glob("*.mp4"))
     assert not list(destination.glob(".*.partial.mp4"))
     assert not list(destination.glob(".dvd-bridge-*.parts.*"))
+
+
+def test_protected_source_refused_before_tools_or_output(tmp_path, monkeypatch):
+    source = dvd.Source(tmp_path, "beveiligd", "dvd", (), dvd.CSS_NOTICE, protected=True)
+
+    def forbidden(*a, **k):
+        raise AssertionError("protected source must not reach ffmpeg/ffprobe")
+
+    monkeypatch.setattr(convert, "_tool", forbidden)
+    with pytest.raises(convert.ConvertError, match="CSS-beveiligd"):
+        convert.convert_title(
+            source,
+            0,
+            "video",
+            tmp_path / "films",
+            tmp_path / "state",
+            convert.Settings(),
+            threading.Event(),
+        )
+    assert not (tmp_path / "films").exists()
+
+
+def test_feed_kernel_sense_becomes_css_notice(tmp_path):
+    class Handle:
+        def __enter__(self):
+            raise OSError("Sense Key 0x5 ASC=0x6f ASCQ=0x3")
+
+        def __exit__(self, *a):
+            return False
+
+    class PathLike:
+        def open(self, mode):
+            return Handle()
+
+    class Stdin:
+        def close(self):
+            pass
+
+    class Process:
+        stdin = Stdin()
+
+    errors = []
+    segment = dvd.Segment(PathLike(), 0, 2048)
+    convert._feed(Process(), (segment,), threading.Event(), [0], errors)
+    assert errors == [dvd.CSS_NOTICE]
