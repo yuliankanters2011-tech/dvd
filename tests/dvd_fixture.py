@@ -83,8 +83,9 @@ def write_dvd(
         total = sum(cells[index][5] for index in cell_indexes)
         header[4:8] = bcd(total)
         struct.pack_into(">H", header, 0x9C, next_pgc)
-        # pgc_t: still_time is at 0xA0, pg_playback_mode at 0xA1.
-        header[0xA1] = playback_modes.get(number, 0)
+        # On-disk pgc_t: goup_pgc_nr 0xA0 (u16), still_time 0xA2,
+        # pg_playback_mode 0xA3. Keep these independent of the parser.
+        header[0xA3] = playback_modes.get(number, 0)
         struct.pack_into(">H", header, 0xE8, 236)
         struct.pack_into(">H", header, 0xEA, 236 + len(cell_indexes) * 24)
         playback = b"".join(

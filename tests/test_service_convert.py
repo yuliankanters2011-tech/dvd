@@ -1,3 +1,5 @@
+import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -168,6 +170,46 @@ def test_mounted_episode_dvd_is_convertible_in_media(svc):
     assert source["label"] == "KNIGHT_RIDER"
     assert source["default_title"] == 1
     assert source["titles"][0]["supported"] is True
+    assert media["skipped_sources"] == []
+
+
+def test_media_explains_skipped_import_and_logs_warning(svc, caplog):
+    folder = svc.config.library_dir / "KNIGHT_RIDER-test"
+    directory = write_dvd(folder)
+    (folder / ".dvd-bridge-import.json").write_text(
+        json.dumps({"label": "KNIGHT_RIDER"}), encoding="utf-8"
+    )
+    ifo = directory / "VIDEO_TS.IFO"
+    good = ifo.read_bytes()
+    ifo.write_bytes(b"broken")
+    with caplog.at_level(logging.WARNING, logger="dvd.service"):
+        media = svc.media()
+    assert media["sources"] == []
+    assert len(media["skipped_sources"]) == 1
+    problem = media["skipped_sources"][0]
+    assert problem["label"] == "KNIGHT_RIDER"
+    assert problem["location"] == "bibliotheek"
+    assert problem["path"] == str(directory)
+    assert "ontbreekt of is beschadigd" in problem["reason"]
+    assert any(
+        record.levelno == logging.WARNING and "KNIGHT_RIDER" in record.getMessage()
+        for record in caplog.records
+    )
+    ifo.write_bytes(good)
+    recovered = svc.media()
+    assert len(recovered["sources"]) == 1
+    assert recovered["skipped_sources"] == []
+
+
+def test_media_keeps_valid_sources_when_another_file_is_empty(svc):
+    write_dvd(svc.config.library_dir / "import")
+    empty = svc.config.library_dir / "empty.vob"
+    empty.touch()
+    media = svc.media()
+    assert [source["label"] for source in media["sources"]] == ["import"]
+    assert len(media["skipped_sources"]) == 1
+    assert media["skipped_sources"][0]["path"] == str(empty)
+    assert "leeg" in media["skipped_sources"][0]["reason"]
 
 
 def test_shutdown_sets_conversion_stop(svc, monkeypatch):

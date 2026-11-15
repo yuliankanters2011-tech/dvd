@@ -53,9 +53,9 @@ Open `http://<NAS-IP>:8085`. De containerpoort blijft 8080; alleen de NAS-poort 
 
 ## Updaten zonder Compose
 
-Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.2**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**.
+Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.3**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
 
-Versie **1.2.2** herstelt de titelkeuze: gewone DVD-titels met celcommando's werden in 1.2.1 onterecht als shuffle geweigerd (`titels: 9`, `ondersteund: 0`). De converter leest nu de echte PGC-afspeelmodus. Versie **1.2.1** herstelde al het uitlezen van GNU ddrescue-kaartbestanden; verwijder bij **ISO hervatten** nooit het verborgen `.partial`-bestand of de `.mapfile`.
+Versie **1.2.3** herstelt de PGC-afspeelmodus die 1.2.2 op de verkeerde byte las, waardoor een complete VIDEO_TS-import soms geen omzetbare bronnen toonde. Overgeslagen bronnen krijgen nu een zichtbare reden en een waarschuwing in de log. De bestaande import hoeft niet opnieuw gekopieerd. Versie **1.2.1** herstelde al het uitlezen van GNU ddrescue-kaartbestanden; verwijder bij **ISO hervatten** nooit het verborgen `.partial`-bestand of de `.mapfile`.
 
 Voer dit volledige blok uit via SSH:
 
@@ -97,7 +97,7 @@ printf '\n'
 sudo docker exec dvd-bridge python3 -c 'from app import __version__; print("DVD Bridge versie:", __version__)'
 ```
 
-Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.2` te staan.
+Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.3` te staan.
 
 ## Bestandssystemen
 
@@ -125,7 +125,9 @@ Ontbreekt `/dev/sr0`, dan is dit geen Docker-probleem dat de container kan oplos
 4. Kies **Video** en bestemming **Films**, of **Alleen geluid** en bestemming **Muziek**.
 5. Vul eventueel een eigen naam in en klik **Omzetten naar MP4**.
 
-Vanaf versie **1.2.2** blijven gewone titels met celcommando's en opeenvolgende multi-PGC-titels kiesbaar. Alleen echte niet-sequentiële weergave (random/shuffle) krijgt de melding dat die titel niet wordt ondersteund. Zie je geen ondersteunde titels, klik dan **Bronnen verversen** en controleer onderaan dat de versie `v1.2.2` of nieuwer is.
+Vanaf versie **1.2.3** blijven gewone titels met celcommando's en opeenvolgende multi-PGC-titels kiesbaar en wordt de PGC-afspeelmodus op de juiste schijfbyte gelezen. Alleen echte niet-sequentiële weergave (random/shuffle) krijgt de melding dat die titel niet wordt ondersteund. Een onleesbare enkele titel blokkeert andere leesbare titels niet meer. Zie je geen ondersteunde titels, klik dan **Bronnen verversen** en controleer onderaan dat de versie `v1.2.3` of nieuwer is.
+
+Als een complete import toch ontbreekt, toont het dashboard onder de bronkeuze de reden en het pad. Dezelfde informatie staat in `/api/media` onder `skipped_sources` en als waarschuwing in `sudo docker logs --tail=100 dvd-bridge`. Je hoeft niet opnieuw te kopiëren: update eerst de container en ververs de bronnen.
 
 De MP4 komt in de gekoppelde Jellyfin-map. Bestaande bestanden worden nooit overschreven. Naast de MP4 staat een `.dvd-bridge.json` marker; verplaats beide als je dezelfde naam opnieuw wilt gebruiken.
 

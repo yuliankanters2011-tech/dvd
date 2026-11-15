@@ -109,6 +109,7 @@ def test_media_endpoint(server):
     with urllib.request.urlopen(url(httpd, "/api/media")) as response:
         data = json.load(response)
     assert data["sources"] == []
+    assert data["skipped_sources"] == []
     assert set(data["destinations"]) == {"films", "music"}
 
 

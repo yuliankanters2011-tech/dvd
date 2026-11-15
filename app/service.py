@@ -256,15 +256,31 @@ class Service:
             pass
         return folder.name
 
-    def _collect_sources(self) -> list[SourceEntry]:
+    def _collect_sources(self, skipped: list[dict[str, str]] | None = None) -> list[SourceEntry]:
         entries: list[SourceEntry] = []
+
+        def skip(location: str, label: str, path: Path, exc: Exception) -> None:
+            reason = str(exc) or type(exc).__name__
+            LOG.warning("Overgeslagen bron %s (%s): %s", path, location, reason)
+            if skipped is not None and len(skipped) < 100:
+                skipped.append(
+                    {"location": location, "label": label, "path": str(path), "reason": reason}
+                )
+
         if self._mounted and self._disc is not None:
             try:
                 source = dvd.inspect_source(self.config.mountpoint, label=self._disc.label)
                 if source.titles:
                     entries.append(SourceEntry("disc", "schijf", source))
+                else:
+                    skip(
+                        "schijf",
+                        self._disc.label,
+                        self.config.mountpoint,
+                        dvd.DvdError("De bron bevat geen videotitels"),
+                    )
             except (dvd.DvdError, OSError) as exc:
-                LOG.debug("Schijf is geen omzetbare DVD-Video: %s", exc)
+                skip("schijf", self._disc.label, self.config.mountpoint, exc)
         root = self.config.library_dir
         if root.is_dir():
             visited = 0
@@ -283,15 +299,21 @@ class Service:
                 if len(current.relative_to(root).parts) >= 3:
                     dirnames[:] = []
                 if current.name.casefold() == "video_ts":
+                    label = self._import_label(current.parent)
                     try:
-                        source = dvd.inspect_source(
-                            current, label=self._import_label(current.parent)
-                        )
+                        source = dvd.inspect_source(current, label=label)
                         if source.titles:
                             ident = hashlib.sha256(str(current.resolve()).encode()).hexdigest()[:16]
                             entries.append(SourceEntry(ident, "bibliotheek", source))
+                        else:
+                            skip(
+                                "bibliotheek",
+                                label,
+                                current,
+                                dvd.DvdError("De bron bevat geen videotitels"),
+                            )
                     except (dvd.DvdError, OSError) as exc:
-                        LOG.debug("Overgeslagen DVD-map %s: %s", current, exc)
+                        skip("bibliotheek", label, current, exc)
                     dirnames[:] = []
                     continue
                 for filename in filenames:
@@ -306,15 +328,18 @@ class Service:
                             ident = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:16]
                             entries.append(SourceEntry(ident, "bibliotheek", source))
                         except (dvd.DvdError, OSError) as exc:
-                            LOG.debug("Overgeslagen bestand %s: %s", path, exc)
+                            skip("bibliotheek", path.stem, path, exc)
                     if len(entries) >= 100:
                         break
         entries.sort(key=lambda entry: (entry.location != "schijf", entry.source.label.casefold()))
         return entries
 
     def media(self) -> dict[str, Any]:
+        skipped: list[dict[str, str]] = []
+        sources = self._collect_sources(skipped)
         return {
-            "sources": [entry.summary() for entry in self._collect_sources()],
+            "sources": [entry.summary() for entry in sources],
+            "skipped_sources": skipped,
             "destinations": {
                 "films": {
                     "path": str(self.config.films_dir),

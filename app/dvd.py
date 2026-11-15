@@ -197,15 +197,23 @@ def _range_segments(
 
 def _cell_addresses(data: bytes) -> dict[tuple[int, int], tuple[int, int]]:
     base = _u32(data, 0xE0) * SECTOR
-    count, _end = _table(data, base, 12, 65535)
+    count = _u16(data, base)
+    end = _u32(data, base + 4) + 1
+    if end < 8 or base + end > len(data):
+        raise DvdError("De DVD-index (IFO) bevat een ongeldige tabel")
+    # libdvdread tolerates authored discs where nr_of_vobs is larger than the
+    # actual table (e.g. Enemy of the State R2) and where the table is empty.
+    count = min(count, (end - 8) // 12)
     result = {}
     for index in range(count):
         offset = base + 8 + index * 12
         key = (_u16(data, offset), data[offset + 2])
         first, last = _u32(data, offset + 4), _u32(data, offset + 8)
-        if key in result or first > last:
-            raise DvdError("De DVD-index bevat ongeldige celadressen")
-        result[key] = (first, last)
+        if first > last:
+            continue
+        # Keep the first address for a duplicated vob/cell id instead of
+        # rejecting the whole DVD.
+        result.setdefault(key, (first, last))
     return result
 
 
@@ -219,20 +227,23 @@ class _Pgc:
 
 def _pgc(data: bytes, pgcn: int, files: tuple[Path, ...], ends: tuple[int, ...]) -> _Pgc:
     base = _u32(data, 0xCC) * SECTOR
-    count, end = _table(data, base, 8, 9999)
+    count, _end = _table(data, base, 8, 9999)
     if not 1 <= pgcn <= count:
         raise DvdError("De DVD-index verwijst naar een ontbrekende programmaketen")
     start = base + _u32(data, base + 8 + (pgcn - 1) * 8 + 4)
-    if start < base + 8 + count * 8 or start + 236 > end:
+    # libdvdread only warns when a PGC extends past the declared PGCIT
+    # last_byte; the authoritative bound is the IFO file itself.
+    if start < base + 8 + count * 8 or start + 236 > len(data):
         raise DvdError("De DVD-index bevat een afgebroken programmaketen")
     next_pgc = _u16(data, start + 0x9C)
-    # PGC playback mode is the authoritative random/shuffle flag. The VMG
-    # title byte only says "multi or random" and also has a cell-command bit.
-    playback_mode = data[start + 0xA1]
+    # On-disk pgc_t is 236 bytes: still_time 0xA2, pg_playback_mode 0xA3.
+    # The VMG title byte only says "multi or random" and also has a
+    # cell-command bit, so it must not be used as the shuffle flag.
+    playback_mode = data[start + 0xA3]
     if playback_mode != 0:
         return _Pgc(0.0, (), next_pgc, playback_mode)
     cells = data[start + 3]
-    # On-disk PGC header is 236 bytes; pointers are relative to the PGC start.
+    # Pointers are relative to the PGC start.
     playback_offset = _u16(data, start + 0xE8)
     position_offset = _u16(data, start + 0xEA)
     if cells == 0 or playback_offset == 0 or position_offset == 0:
@@ -240,8 +251,8 @@ def _pgc(data: bytes, pgcn: int, files: tuple[Path, ...], ends: tuple[int, ...])
     if (
         playback_offset < 236
         or position_offset < 236
-        or start + playback_offset + cells * 24 > end
-        or start + position_offset + cells * 4 > end
+        or start + playback_offset + cells * 24 > len(data)
+        or start + position_offset + cells * 4 > len(data)
     ):
         raise DvdError("De DVD-index bevat afgebroken celtabellen")
     addresses = _cell_addresses(data)
@@ -273,12 +284,20 @@ def _vts_title(
     data = _ifo(directory, f"VTS_{number:02d}_0", b"DVDVIDEO-VTS")
     ptt_base = _u32(data, 0xC8) * SECTOR
     count, ptt_end = _table(data, ptt_base, 4, 99)
+    declared_count = count
+    # Some authored discs (e.g. Transformers 3) have trailing TTU offsets past
+    # the table. libdvdread truncates the usable title count there instead of
+    # rejecting every earlier title in the same VTS.
+    for index in range(count):
+        relative = _u32(data, ptt_base + 8 + index * 4)
+        if ptt_base + relative + 4 > ptt_end:
+            count = index
+            break
     if not 1 <= vts_ttn <= count:
         raise DvdError("De DVD-index verwijst naar een ontbrekende titel")
     unit = ptt_base + _u32(data, ptt_base + 8 + (vts_ttn - 1) * 4)
     # On disk the offset points straight at the first {pgcn, pgn} pair.
-    # libdvdread derives the chapter count from the distance to the next unit.
-    if unit < ptt_base + 8 + count * 4 or unit + 4 > ptt_end:
+    if unit < ptt_base + 8 + declared_count * 4 or unit + 4 > ptt_end:
         raise DvdError("De DVD-index bevat een afgebroken titeltabel")
     pgcn = _u16(data, unit)
     files, ends = _vts_files(directory, number)
@@ -316,7 +335,14 @@ def _dvd_source(directory: Path, label: str | None = None) -> Source:
         vts_ttn = data[offset + 7]
         if not 1 <= vts <= 99 or not 1 <= vts_ttn <= 99:
             raise DvdError("De DVD-index bevat een ongeldig titelnummer")
-        titles.append(_vts_title(directory, vts, index + 1, vts_ttn, _u16(data, offset + 2)))
+        chapters = _u16(data, offset + 2)
+        try:
+            title = _vts_title(directory, vts, index + 1, vts_ttn, chapters)
+        except DvdError as exc:
+            # Keep the problem attached to this title. One damaged extra or
+            # missing VTS must not hide every other readable episode/film.
+            title = Title(index + 1, 0, chapters, (), False, str(exc))
+        titles.append(title)
     name = label or (
         directory.parent.name if directory.name.casefold() == "video_ts" else directory.name
     )
