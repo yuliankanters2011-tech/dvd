@@ -1,5 +1,6 @@
 import json
 import logging
+import struct
 from pathlib import Path
 
 import pytest
@@ -170,6 +171,27 @@ def test_mounted_episode_dvd_is_convertible_in_media(svc):
     assert source["label"] == "KNIGHT_RIDER"
     assert source["default_title"] == 1
     assert source["titles"][0]["supported"] is True
+    assert media["skipped_sources"] == []
+
+
+def test_library_dvd_with_real_pal_time_bytes_is_convertible(svc):
+    directory = write_dvd(svc.config.library_dir / "KNIGHT_RIDER")
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    pgcit = struct.unpack_from(">I", data, 0xCC)[0] * 2048
+    start = pgcit + struct.unpack_from(">I", data, pgcit + 12)[0]
+    time = bytes.fromhex("00 46 17 60")
+    data[start + 4 : start + 8] = time
+    playback_offset = struct.unpack_from(">H", data, start + 0xE8)[0]
+    data[start + playback_offset + 4 : start + playback_offset + 8] = time
+    ifo.write_bytes(data)
+    media = svc.media()
+    assert len(media["sources"]) == 1
+    source = media["sources"][0]
+    assert source["label"] == "KNIGHT_RIDER"
+    assert source["default_title"] == 1
+    assert source["titles"][0]["supported"] is True
+    assert source["titles"][0]["duration_seconds"] == 2777.8
     assert media["skipped_sources"] == []
 
 
