@@ -13,7 +13,7 @@ Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest e
 - Webdashboard met status, kopieerknop, ISO-knop, annuleerknoppen, lade sluiten en uitwerpen.
 - ISO-bestanden die je in DSM File Station als virtuele schijf kunt aankoppelen.
 - Licht beschadigde ISO's worden toch opgeslagen; bij zware schade verschijnt **Toch doorgaan**. Een geannuleerde ISO kan later worden hervat.
-- **VIDEO_TS naar MP4**: kies een titel uit de dvd of een losse `.ts`/`.vob`/`.mpg`/`.mpeg` uit de NAS-bibliotheek.
+- **VIDEO_TS naar MP4**: kies een titel uit de dvd of een losse `.ts`/`.vob`/`.mpg`/`.mpeg` uit de NAS-bibliotheek. Overgeslagen bronnen krijgen een zichtbare reden en een waarschuwing in de containerlog.
 - Twee vaste Jellyfin-bestemmingen: **Films** (H.264 + AAC) en **Muziek** (alleen AAC-geluid in MP4).
 - Voortgang, annuleren, hervatten via idempotente markers en nooit bestaande bestanden overschrijven.
 - Geen `privileged: true`; alleen `SYS_ADMIN`, één apparaat en AppArmor-unconfined voor mounten.
@@ -213,6 +213,8 @@ Versie 1.2.1 herkent de statusregel in GNU ddrescue-kaartbestanden correct. Oude
 
 Versie **1.2.2** herstelt de titelkeuze bij gewone DVD-Video. Een celcommando's-vlag in de VMG-tabel betekent niet dat een titel shuffle gebruikt. De converter controleert nu de echte afspeelmodus per PGC; normale afleveringen en opeenvolgende multi-PGC-titels blijven kiesbaar. Alleen niet-sequentiële PGC's (random/shuffle) worden geweigerd. Zie je bij een oudere versie `titels: 9` maar `ondersteund: 0`, werk dan bij naar 1.2.2 en klik **Bronnen verversen**.
 
+Versie **1.2.3** herstelt een regressie in 1.2.2: de PGC-afspeelmodus werd op byte `0xA1` gelezen in plaats van `0xA3` (`pg_playback_mode` in de schijfindeling). Daardoor konden gewone titels onterecht als shuffle worden geweigerd of kon een complete VIDEO_TS-import als bron verdwijnen. De indexlezer volgt nu beter de tolerantie van libdvdread voor dubbele celadressen, een te groot opgegeven aantal cellen, gedeelde PGC-startposities en afgekapte PTT-titeltabellen. Een onleesbare enkele titel blokkeert andere leesbare titels niet meer. Als een bron toch wordt overgeslagen, tonen het dashboard en `/api/media` nu de reden en het pad, en schrijft de container een waarschuwing op standaard logniveau. Werk bij naar **1.2.3** en klik **Bronnen verversen**; de bestaande import hoeft niet opnieuw gekopieerd.
+
 ## Na een NAS-herstart
 
 De dedicated shared bind-mount kan na een reboot verdwijnen. Maak in DSM een taak:
@@ -248,7 +250,8 @@ sudo docker compose logs --tail=100 dvd
 | `FFmpeg ontbreekt` | Oude image; pull/build de nieuwe image met het `ffmpeg`-pakket |
 | `ddrescue-kaartbestand bevat ongeldige getallen` | Versie 1.2.0 of ouder; update naar 1.2.1 en klik **ISO hervatten** zonder het `.partial`-bestand of de mapfile te verwijderen |
 | Conversie meldt “bestaat al” | Er staat al een MP4 of marker; kies een andere naam of verplaats beide |
-| Bron toont wel titels maar `ondersteund: 0` | Versie 1.2.1 of ouder kan gewone titels met celcommando's onterecht als shuffle weigeren; update naar 1.2.2 |
+| Bron toont wel titels maar `ondersteund: 0` | Versie 1.2.1 of ouder kan gewone titels met celcommando's onterecht als shuffle weigeren; update naar 1.2.2. Versie 1.2.2 zelf leest de PGC-modus op de verkeerde byte; update naar 1.2.3 |
+| Geen omzetbare bronnen, maar de import is compleet | Update naar 1.2.3 en klik **Bronnen verversen**. Lees anders de nieuwe melding onder de bronkeuze, `/api/media` (`skipped_sources`) of `docker logs dvd-bridge` voor de exacte reden |
 | Conversie meldt beschadigd/beveiligd | Bron is mogelijk CSS-versleuteld, beschadigd of geen ondersteunde DVD-Video |
 | Dashboard niet bereikbaar | Container draait niet, poort is bezet, of firewall blokkeert poort 8080 |
 

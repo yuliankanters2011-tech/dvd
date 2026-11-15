@@ -117,11 +117,15 @@ def test_corrupt_ifo_falls_back_to_bup(tmp_path):
     assert dvd.inspect_source(directory).title().duration == 2
 
 
-def test_missing_vob_rejected(tmp_path):
+def test_missing_vob_marks_only_that_title_unsupported(tmp_path):
     directory = write_dvd(tmp_path)
     (directory / "VTS_01_1.VOB").unlink()
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 0
+    assert source.titles[0].supported is False
+    assert "niet compleet" in source.titles[0].reason
     with pytest.raises(dvd.DvdError, match="niet compleet"):
-        dvd.inspect_source(directory)
+        source.title(1)
 
 
 def test_truncated_table_rejected(tmp_path):
@@ -134,10 +138,13 @@ def test_truncated_table_rejected(tmp_path):
         dvd.inspect_source(directory)
 
 
-def test_pgc_loop_rejected(tmp_path):
+def test_pgc_loop_marks_title_unsupported(tmp_path):
     write_dvd(tmp_path, pgcs=[([0], 1)])
+    source = dvd.inspect_source(tmp_path / "VIDEO_TS")
+    assert source.default_title == 0
+    assert "lus" in source.titles[0].reason
     with pytest.raises(dvd.DvdError, match="lus"):
-        dvd.inspect_source(tmp_path / "VIDEO_TS")
+        source.title(1)
 
 
 @pytest.mark.parametrize("flag", [0x20, 0x40, 0x60])
@@ -219,3 +226,140 @@ def test_default_title_skips_non_sequential_pgc(tmp_path):
     source = dvd.inspect_source(directory)
     assert source.default_title == 2
     assert source.title(2).duration == 3
+
+
+def _first_pgc_offset(data: bytes) -> int:
+    pgcit = struct.unpack_from(">I", data, 0xCC)[0] * SECTOR
+    return pgcit + struct.unpack_from(">I", data, pgcit + 12)[0]
+
+
+def test_pgc_layout_uses_disk_offsets_not_struct_offsets(tmp_path):
+    """Regression for 1.2.2: mode is 0xA3, not the high byte of goup at 0xA1."""
+    directory = write_dvd(tmp_path)
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    start = _first_pgc_offset(data)
+    struct.pack_into(">H", data, start + 0x9E, 0x0304)  # previous PGC
+    struct.pack_into(">H", data, start + 0xA0, 0x0102)  # go-up PGC
+    data[start + 0xA2] = 255  # still_time
+    data[start + 0xA3] = 0  # sequential playback
+    ifo.write_bytes(data)
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 1
+    assert source.title(1).supported is True
+
+
+@pytest.mark.parametrize("mode", [1, 2, 0x80])
+def test_pgc_mode_byte_a3_is_authoritative(tmp_path, mode):
+    directory = write_dvd(tmp_path)
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    start = _first_pgc_offset(data)
+    data[start + 0xA1] = 0
+    data[start + 0xA3] = mode
+    ifo.write_bytes(data)
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 0
+    assert "shuffle" in source.titles[0].reason
+
+
+def test_duplicate_cell_address_keeps_first_mapping(tmp_path):
+    directory = write_dvd(tmp_path)
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    base = struct.unpack_from(">I", data, 0xE0)[0] * SECTOR
+    count = struct.unpack_from(">H", data, base)[0]
+    last = struct.unpack_from(">I", data, base + 4)[0]
+    entry = bytes(data[base + 8 : base + 20])
+    data[base + 8 + count * 12 : base + 8 + (count + 1) * 12] = entry
+    struct.pack_into(">H", data, base, count + 1)
+    struct.pack_into(">I", data, base + 4, last + 12)
+    ifo.write_bytes(data)
+    title = dvd.inspect_source(directory).title()
+    assert title.supported is True
+    assert title.segments == (dvd.Segment(directory / "VTS_01_1.VOB", 0, 2 * SECTOR),)
+
+
+def test_oversized_cell_address_count_is_clamped(tmp_path):
+    directory = write_dvd(tmp_path)
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    base = struct.unpack_from(">I", data, 0xE0)[0] * SECTOR
+    struct.pack_into(">H", data, base, 500)
+    ifo.write_bytes(data)
+    assert dvd.inspect_source(directory).title().size_bytes == 2 * SECTOR
+
+
+def test_reversed_cell_address_is_skipped(tmp_path):
+    directory = write_dvd(tmp_path)
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    base = struct.unpack_from(">I", data, 0xE0)[0] * SECTOR
+    struct.pack_into(">II", data, base + 12, 3, 1)
+    ifo.write_bytes(data)
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 0
+    assert "mist het adres" in source.titles[0].reason
+
+
+def test_duplicate_pgc_start_is_shared(tmp_path):
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, 1, 0, 1, 0, 2), (1, 2, 2, 3, 0, 3)],
+        pgcs=[([0], 0), ([1], 0)],
+        titles=[(1, 1, 1), (2, 2, 1)],
+        vob_sectors={1: 4},
+    )
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    base = struct.unpack_from(">I", data, 0xCC)[0] * SECTOR
+    first = struct.unpack_from(">I", data, base + 12)[0]
+    struct.pack_into(">I", data, base + 20, first)
+    ifo.write_bytes(data)
+    source = dvd.inspect_source(directory)
+    assert source.default_title in {1, 2}
+    assert source.title(1).segments == source.title(2).segments
+    assert source.title(1).duration == source.title(2).duration == 2
+
+
+def test_trailing_ptt_offset_past_table_does_not_hide_earlier_title(tmp_path):
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, 1, 0, 1, 0, 2), (1, 2, 2, 3, 0, 3)],
+        pgcs=[([0], 0), ([1], 0)],
+        titles=[(1, 1, 1), (2, 2, 1)],
+        vob_sectors={1: 4},
+    )
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    base = struct.unpack_from(">I", data, 0xC8)[0] * SECTOR
+    struct.pack_into(">I", data, base + 12, SECTOR)
+    ifo.write_bytes(data)
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 1
+    assert source.title(1).duration == 2
+    assert source.titles[1].supported is False
+    assert "ontbrekende titel" in source.titles[1].reason
+
+
+def test_pgc_past_declared_pgcit_end_but_inside_ifo_is_readable(tmp_path):
+    directory = write_dvd(tmp_path)
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    base = struct.unpack_from(">I", data, 0xCC)[0] * SECTOR
+    struct.pack_into(">I", data, base + 4, 15)  # header + one 8-byte entry - 1
+    ifo.write_bytes(data)
+    assert dvd.inspect_source(directory).title().duration == 2
+
+
+def test_pgc_truncated_inside_ifo_is_rejected(tmp_path):
+    directory = write_dvd(tmp_path)
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    base = struct.unpack_from(">I", data, 0xCC)[0] * SECTOR
+    struct.pack_into(">I", data, base + 4, 15)
+    start = _first_pgc_offset(data)
+    ifo.write_bytes(data[: start + 200])
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 0
+    assert "afgebroken programmaketen" in source.titles[0].reason

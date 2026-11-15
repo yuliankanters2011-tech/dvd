@@ -25,7 +25,7 @@ const titleLabels = {
 };
 let busy = false;
 let latest = null;
-let media = { sources: [], destinations: {} };
+let media = { sources: [], skipped_sources: [], destinations: {} };
 let selectedSourceId = "";
 let sourceLoading = false;
 
@@ -68,7 +68,9 @@ function renderTitles() {
   select.replaceChildren();
   if (!source) {
     select.append(option("0", "Geen titel beschikbaar"));
-    $("source-note").textContent = "Geen VIDEO_TS-map of TS/VOB-bestand gevonden. Plaats een DVD-Video, of kopieer/importeer eerst naar de NAS-bibliotheek.";
+    $("source-note").textContent = media.skipped_sources?.length
+      ? "Er zijn bronnen gevonden die niet konden worden gelezen. Zie de melding hieronder."
+      : "Geen VIDEO_TS-map of TS/VOB-bestand gevonden. Plaats een DVD-Video, of kopieer/importeer eerst naar de NAS-bibliotheek.";
     return;
   }
   const supported = source.titles.filter((item) => item.supported);
@@ -92,6 +94,25 @@ function renderTitles() {
   const stillThere = [...select.options].some((item) => item.value === previous && !item.disabled);
   select.value = stillThere ? previous : String(supported[0]?.number ?? source.default_title);
   $("source-note").textContent = source.note || `${source.kind === "dvd" ? "DVD-video" : "Videobestand"} · ${source.label}`;
+}
+
+function renderSkippedSources(items) {
+  const skipped = Array.isArray(items) ? items : [];
+  const node = $("source-warnings");
+  node.classList.toggle("hidden", skipped.length === 0);
+  if (!skipped.length) {
+    node.textContent = "";
+    return;
+  }
+  const lines = [`${skipped.length} ${skipped.length === 1 ? "bron" : "bronnen"} overgeslagen:`];
+  for (const item of skipped.slice(0, 3)) {
+    const where = item.location === "schijf" ? "schijf" : "NAS";
+    lines.push(`${item.label || "Bron"} (${where}) · ${item.reason || "Onbekende reden"}\n${item.path || ""}`);
+  }
+  if (skipped.length > 3) {
+    lines.push(`Nog ${skipped.length - 3} overgeslagen; zie /api/media voor details.`);
+  }
+  node.textContent = lines.join("\n");
 }
 
 function updateDestination() {
@@ -118,6 +139,7 @@ function renderMedia(data) {
   select.value = exists ? previous : data.sources.find((item) => item.default_title)?.id || data.sources[0]?.id || "";
   selectedSourceId = select.value;
   renderTitles();
+  renderSkippedSources(data.skipped_sources);
   updateDestination();
 }
 
