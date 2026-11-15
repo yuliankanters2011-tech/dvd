@@ -290,6 +290,24 @@ def test_oversized_cell_address_count_is_clamped(tmp_path):
     assert dvd.inspect_source(directory).title().size_bytes == 2 * SECTOR
 
 
+@pytest.mark.parametrize("declared_vobs", [0, 1, 2])
+def test_cell_address_table_length_is_authoritative_not_nr_of_vobs(tmp_path, declared_vobs):
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, 1, 0, 1, 0, 2), (1, 2, 2, 3, 0, 3), (1, 3, 4, 5, 0, 4)],
+        vob_sectors={1: 6},
+    )
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    base = struct.unpack_from(">I", data, 0xE0)[0] * SECTOR
+    struct.pack_into(">H", data, base, declared_vobs)
+    ifo.write_bytes(data)
+    title = dvd.inspect_source(directory).title()
+    assert title.supported is True
+    assert title.duration == 9
+    assert title.size_bytes == 6 * SECTOR
+
+
 def test_reversed_cell_address_is_skipped(tmp_path):
     directory = write_dvd(tmp_path)
     ifo = directory / "VTS_01_0.IFO"
@@ -481,6 +499,9 @@ def test_knight_rider_like_titles_keep_longest_title_selectable(tmp_path):
         data[start + 4 : start + 8] = time
         playback_offset = struct.unpack_from(">H", data, start + 0xE8)[0]
         data[start + playback_offset + 4 : start + playback_offset + 8] = time
+    c_adt = struct.unpack_from(">I", data, 0xE0)[0] * SECTOR
+    # One VOB contains all episode cells; nr_of_vobs must not limit the scan.
+    assert struct.unpack_from(">H", data, c_adt)[0] == 1
     ifo.write_bytes(data)
     source = dvd.inspect_source(directory, label="KNIGHT_RIDER")
     assert source.summary()["title_count"] == 4

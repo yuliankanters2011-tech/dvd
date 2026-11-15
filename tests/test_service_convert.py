@@ -195,6 +195,27 @@ def test_library_dvd_with_real_pal_time_bytes_is_convertible(svc):
     assert media["skipped_sources"] == []
 
 
+def test_library_multi_cell_vts_with_one_vob_is_convertible(svc):
+    directory = write_dvd(
+        svc.config.library_dir / "KNIGHT_RIDER",
+        cells=[(1, 1, 0, 1, 0, 2), (1, 2, 2, 3, 0, 3), (1, 3, 4, 5, 0, 4)],
+        vob_sectors={1: 6},
+    )
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    c_adt = struct.unpack_from(">I", data, 0xE0)[0] * 2048
+    struct.pack_into(">H", data, c_adt, 1)
+    ifo.write_bytes(data)
+    media = svc.media()
+    assert len(media["sources"]) == 1
+    source = media["sources"][0]
+    assert source["default_title"] == 1
+    assert source["titles"][0]["supported"] is True
+    assert source["titles"][0]["duration_seconds"] == 9
+    assert source["titles"][0]["size_bytes"] == 6 * 2048
+    assert media["skipped_sources"] == []
+
+
 def test_media_explains_skipped_import_and_logs_warning(svc, caplog):
     folder = svc.config.library_dir / "KNIGHT_RIDER-test"
     directory = write_dvd(folder)

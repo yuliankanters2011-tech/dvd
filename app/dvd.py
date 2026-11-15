@@ -219,15 +219,16 @@ def _range_segments(
 
 def _cell_addresses(data: bytes) -> dict[tuple[int, int], tuple[int, int]]:
     base = _u32(data, 0xE0) * SECTOR
-    count = _u16(data, base)
     end = _u32(data, base + 4) + 1
     if end < 8 or base + end > len(data):
         raise DvdError("De DVD-index (IFO) bevat een ongeldige tabel")
-    # libdvdread tolerates authored discs where nr_of_vobs is larger than the
-    # actual table (e.g. Enemy of the State R2) and where the table is empty.
-    count = min(count, (end - 8) // 12)
+    # C_ADT.nr_of_vobs is not the number of 12-byte cell addresses. One VOB
+    # can contain many cells. libdvdread walks the whole declared table
+    # (info_length / sizeof(cell_adr_t)) and only clamps nr_of_vobs when it is
+    # larger than the available entries (e.g. Enemy of the State R2).
+    entry_count = (end - 8) // 12
     result = {}
-    for index in range(count):
+    for index in range(entry_count):
         offset = base + 8 + index * 12
         key = (_u16(data, offset), data[offset + 2])
         first, last = _u32(data, offset + 4), _u32(data, offset + 8)
@@ -292,7 +293,7 @@ def _pgc(data: bytes, pgcn: int, files: tuple[Path, ...], ends: tuple[int, ...])
             continue
         key = (_u16(data, position), data[position + 3])
         if key not in addresses:
-            raise DvdError("De DVD-index mist het adres van een videocel")
+            raise DvdError(f"De DVD-index mist het adres van videocel {key[0]}/{key[1]}")
         first, last = addresses[key]
         segments.extend(_range_segments(files, ends, first, last))
     if not segments:
