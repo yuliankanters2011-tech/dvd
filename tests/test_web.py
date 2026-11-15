@@ -297,3 +297,21 @@ def test_sleep_blocked_while_converting(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         post_json(httpd, "/api/command", {"command": "speed", "speed": 4})
     assert exc.value.code == 409
+
+
+def test_css_status_and_command_refusal(server):
+    httpd, service = server
+    service.update(
+        css_protected=True,
+        state="protected",
+        message="Deze dvd is CSS-beveiligd. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video.",
+    )
+    with urllib.request.urlopen(url(httpd, "/api/status")) as response:
+        data = json.load(response)
+    assert data["css_protected"] is True
+    assert data["state"] == "protected"
+    for command in ("copy", "iso"):
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            post_json(httpd, "/api/command", {"command": command})
+        assert exc.value.code == 409
+        assert "CSS-beveiligd" in json.load(exc.value)["error"]

@@ -13,6 +13,8 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
+from .protection import CSS_NOTICE, is_css_sense
+
 SECTOR = 2048
 MAX_IFO = 8 * 1024 * 1024
 VIDEO_SUFFIXES = {".ts", ".vob", ".mpg", ".mpeg"}
@@ -91,6 +93,7 @@ class Source:
     kind: str
     titles: tuple[Title, ...] = ()
     note: str = ""
+    protected: bool = False
 
     @property
     def default_title(self) -> int:
@@ -106,6 +109,8 @@ class Source:
         A title is dropped only when all of its ranges are already covered;
         partial overlap (a shared intro, for example) is kept intact.
         """
+        if self.protected:
+            raise DvdError(self.note or CSS_NOTICE)
         usable = [title for title in self.titles if title.supported and title.segments]
         if not usable:
             raise DvdError("Deze bron bevat geen ondersteunde titels om samen te voegen")
@@ -129,6 +134,8 @@ class Source:
         )
 
     def title(self, number: int = 0) -> Title:
+        if self.protected:
+            raise DvdError(self.note or CSS_NOTICE)
         if number == ALL_TITLES:
             return self.combined_title()
         wanted = number or self.default_title
@@ -148,6 +155,7 @@ class Source:
             "label": self.label,
             "kind": self.kind,
             "note": self.note,
+            "protected": self.protected,
             "default_title": self.default_title,
             "title_count": len(self.titles),
             "titles": [title.summary() for title in self.titles],
@@ -417,8 +425,81 @@ def _vts_title(
     return Title(global_number, duration, chapters, tuple(segments))
 
 
+def _pes_scrambled(sector: bytes, offset: int) -> bool:
+    if offset + 9 > len(sector) or sector[offset : offset + 3] != b"\x00\x00\x01":
+        return False
+    stream = sector[offset + 3]
+    video = 0xE0 <= stream <= 0xEF
+    audio = 0xC0 <= stream <= 0xDF
+    private = stream == 0xBD
+    return (video or audio or private) and bool(sector[offset + 6] & 0x30)
+
+
+def _sector_scrambled(sector: bytes) -> bool:
+    """Check the clear MPEG-2 pack/PES header, never IFO bytes or payload guesses."""
+    if len(sector) < 23 or sector[:3] != b"\x00\x00\x01" or sector[3] != 0xBA:
+        return False
+    if sector[4] & 0xC0 != 0x40:  # MPEG-1 system streams have no CSS flag here.
+        return False
+    offset = 14 + (sector[13] & 7)
+    while offset + 6 <= len(sector):
+        if sector[offset : offset + 3] != b"\x00\x00\x01":
+            return False
+        stream = sector[offset + 3]
+        if _pes_scrambled(sector, offset):
+            return True
+        if stream not in {0xBB, 0xBC, 0xBE, 0xBF}:
+            return False
+        length = _u16(sector, offset + 4)
+        if length == 0:
+            return False
+        offset += 6 + length
+    return False
+
+
+def _css_protected(directory: Path) -> bool:
+    """Bounded header-only scan of title VOBs; no decryption or full-disc read."""
+    pattern = re.compile(r"vts_\d{2}_[1-9]\.vob")
+    try:
+        files = sorted(
+            path
+            for path in directory.iterdir()
+            if pattern.fullmatch(path.name.casefold()) and path.is_file() and not path.is_symlink()
+        )
+    except OSError as exc:
+        raise DvdError(f"Kan de DVD-map niet lezen: {exc.strerror or exc}") from exc
+    budget = 4 * 1024 * 1024
+    window = 32 * SECTOR
+    for path in files:
+        try:
+            size = path.stat().st_size
+            offsets = {0, max(0, (size // 2) // SECTOR * SECTOR), max(0, size - window)}
+            with path.open("rb") as handle:
+                for offset in sorted(offsets):
+                    if budget <= 0 or offset >= size:
+                        continue
+                    handle.seek(offset)
+                    data = handle.read(min(window, budget, size - offset))
+                    budget -= len(data)
+                    for start in range(0, len(data) - SECTOR + 1, SECTOR):
+                        if _sector_scrambled(data[start : start + SECTOR]):
+                            return True
+        except OSError as exc:
+            if is_css_sense(str(exc)):
+                return True
+            raise DvdError(f"Kan {path.name} niet lezen: {exc.strerror or exc}") from exc
+        if budget <= 0:
+            break
+    return False
+
+
 def _dvd_source(directory: Path, label: str | None = None) -> Source:
     data = _ifo(directory, "VIDEO_TS", b"DVDVIDEO-VMG")
+    name = label or (
+        directory.parent.name if directory.name.casefold() == "video_ts" else directory.name
+    )
+    if _css_protected(directory):
+        return Source(directory, name or "DVD", "dvd", (), CSS_NOTICE, protected=True)
     base = _u32(data, 0xC4) * SECTOR
     count, _end = _table(data, base, 12, 99)
     titles: list[Title] = []
@@ -436,9 +517,6 @@ def _dvd_source(directory: Path, label: str | None = None) -> Source:
             # missing VTS must not hide every other readable episode/film.
             title = Title(index + 1, 0, chapters, (), False, str(exc))
         titles.append(title)
-    name = label or (
-        directory.parent.name if directory.name.casefold() == "video_ts" else directory.name
-    )
     return Source(
         directory,
         name or "DVD",

@@ -15,6 +15,7 @@ from typing import Any
 
 from . import __version__, convert, copy, drive, dvd, image
 from .config import Config, validate_drive_speed, validate_sleep_idle
+from .protection import CSS_NOTICE, is_css_error, is_css_sense
 
 LOG = logging.getLogger("dvd.service")
 SETTINGS_FILE = "drive-settings.json"
@@ -57,6 +58,7 @@ class Snapshot:
     message: str = "De speler wordt gecontroleerd…"
     device: str = "/dev/sr0"
     disc: dict[str, Any] | None = None
+    css_protected: bool = False
     nas_folder: str = "/srv/dvd/disc"
     library_folder: str = "/srv/dvd/library"
     films_folder: str = "/volume1/video/Films"
@@ -291,6 +293,8 @@ class Service:
             current = self.snapshot()
             if self._conversion_pending or current["convert_state"] == "working":
                 raise RuntimeError("Wacht tot het omzetten klaar is of annuleer de conversie")
+            if command in {"copy", "iso", "iso_force"} and current["css_protected"]:
+                raise RuntimeError(CSS_NOTICE)
             if command in {"sleep", "wake"} and (self._busy() or self._pending_work()):
                 raise RuntimeError(
                     "Wacht tot de huidige bewerking klaar is voordat je de speler "
@@ -349,9 +353,12 @@ class Service:
         if not isinstance(name, str) or len(name) > 200:
             raise ValueError("Ongeldige naam")
         with self._job_lock:
+            current = self.snapshot()
+            if source_id == "disc" and current["css_protected"]:
+                raise RuntimeError(CSS_NOTICE)
             if (
                 self._conversion_pending
-                or self.snapshot()["convert_state"] == "working"
+                or current["convert_state"] == "working"
                 or not self.commands.empty()
             ):
                 raise RuntimeError("Er wordt al omgezet")
@@ -385,19 +392,35 @@ class Service:
                 )
 
         if self._mounted and self._disc is not None and not self._sleeping:
-            try:
-                source = dvd.inspect_source(self.config.mountpoint, label=self._disc.label)
-                if source.titles:
-                    entries.append(SourceEntry("disc", "schijf", source))
-                else:
-                    skip(
+            if self.snapshot()["css_protected"]:
+                entries.append(
+                    SourceEntry(
+                        "disc",
                         "schijf",
-                        self._disc.label,
-                        self.config.mountpoint,
-                        dvd.DvdError("De bron bevat geen videotitels"),
+                        dvd.Source(
+                            self.config.mountpoint,
+                            self._disc.label,
+                            "dvd",
+                            (),
+                            CSS_NOTICE,
+                            protected=True,
+                        ),
                     )
-            except (dvd.DvdError, OSError) as exc:
-                skip("schijf", self._disc.label, self.config.mountpoint, exc)
+                )
+            else:
+                try:
+                    source = dvd.inspect_source(self.config.mountpoint, label=self._disc.label)
+                    if source.titles or source.protected:
+                        entries.append(SourceEntry("disc", "schijf", source))
+                    else:
+                        skip(
+                            "schijf",
+                            self._disc.label,
+                            self.config.mountpoint,
+                            dvd.DvdError("De bron bevat geen videotitels"),
+                        )
+                except (dvd.DvdError, OSError) as exc:
+                    skip("schijf", self._disc.label, self.config.mountpoint, exc)
         root = self.config.library_dir
         if root.is_dir():
             visited = 0
@@ -419,7 +442,7 @@ class Service:
                     label = self._import_label(current.parent)
                     try:
                         source = dvd.inspect_source(current, label=label)
-                        if source.titles:
+                        if source.titles or source.protected:
                             ident = hashlib.sha256(str(current.resolve()).encode()).hexdigest()[:16]
                             entries.append(SourceEntry(ident, "bibliotheek", source))
                         else:
@@ -453,9 +476,27 @@ class Service:
 
     def media(self) -> dict[str, Any]:
         skipped: list[dict[str, str]] = []
-        sources = self._collect_sources(skipped)
+        entries = self._collect_sources(skipped)
+        sources = []
+        for entry in entries:
+            if entry.source.protected:
+                reason = entry.source.note or CSS_NOTICE
+                LOG.warning(
+                    "Beveiligde bron %s (%s): %s", entry.source.path, entry.location, reason
+                )
+                if len(skipped) < 100:
+                    skipped.append(
+                        {
+                            "location": entry.location,
+                            "label": entry.source.label,
+                            "path": str(entry.source.path),
+                            "reason": reason,
+                        }
+                    )
+            else:
+                sources.append(entry.summary())
         return {
-            "sources": [entry.summary() for entry in sources],
+            "sources": sources,
             "skipped_sources": skipped,
             "destinations": {
                 "films": {
@@ -485,8 +526,24 @@ class Service:
             except drive.DriveError:
                 LOG.exception("Schijf kon bij afsluiten niet worden losgekoppeld")
 
+    def _protected_notice(self) -> None:
+        self.update(css_protected=True, state="protected", message=CSS_NOTICE, error="")
+        LOG.warning("%s", CSS_NOTICE)
+
+    def _check_disc_protection(self) -> bool:
+        if drive.copyright_protection(self.config.device) == 1:
+            self._protected_notice()
+            return True
+        return False
+
     def _error(self, message: str, state: str = "error") -> None:
-        LOG.error("%s", message)
+        if is_css_sense(message):
+            self._protected_notice()
+            return
+        if message == CSS_NOTICE:
+            LOG.warning("%s", message)
+        else:
+            LOG.error("%s", message)
         self.update(state=state, message=message, error=message)
         self._retry_at = time.monotonic() + 30
 
@@ -503,6 +560,7 @@ class Service:
             state=state,
             message=message,
             disc=None,
+            css_protected=False,
             error="",
             copy_state="idle",
             copy_percent=0,
@@ -539,7 +597,8 @@ class Service:
         self._mounted = True
         self._retry_at = 0
         self._touch()
-        self.update(state="ready", message="Schijf klaar: open de map op je NAS.", error="")
+        if not self._check_disc_protection():
+            self.update(state="ready", message="Schijf klaar: open de map op je NAS.", error="")
         if self._drive_speed and self._speed_supported is not False:
             self._apply_speed(self._drive_speed, announce=False)
         LOG.info(
@@ -557,6 +616,8 @@ class Service:
         self._ensure_not_converting()
         if not self._mounted or self._disc is None:
             raise copy.CopyError("Plaats eerst een leesbare schijf")
+        if self.snapshot()["css_protected"]:
+            raise copy.CopyError(CSS_NOTICE)
         if self._copy_done:
             return
         if drive.drive_status(self.config.device) != "disc" or drive.media_changed(
@@ -608,6 +669,8 @@ class Service:
         self._ensure_not_converting()
         if not self._mounted or self._disc is None:
             raise image.ImageError("Plaats eerst een leesbare schijf")
+        if self.snapshot()["css_protected"]:
+            raise image.ImageError(CSS_NOTICE)
         if drive.drive_status(self.config.device) != "disc" or drive.media_changed(
             self.config.device
         ):
@@ -709,6 +772,8 @@ class Service:
             raise convert.ConvertError(
                 "De bron is niet meer beschikbaar. Vernieuw de bronnenlijst."
             )
+        if entry.source.protected or (job.source_id == "disc" and self.snapshot()["css_protected"]):
+            raise convert.ConvertError(CSS_NOTICE)
         live = job.source_id == "disc"
         identity = ""
         if live:
@@ -988,20 +1053,21 @@ class Service:
             RuntimeError,
         ) as exc:
             current = self.snapshot()
+            message = CSS_NOTICE if is_css_error(exc) else str(exc)
             if isinstance(command, ImageJob) or command == "iso":
                 self.update(
                     image_state="error",
-                    image_error=str(exc),
+                    image_error=message,
                     image_force_available=False,
                     image_cancel_requested=False,
                 )
             elif current["image_state"] == "working":
-                self.update(image_state="error", image_error=str(exc))
+                self.update(image_state="error", image_error=message)
             if command == "copy" or current["copy_state"] == "copying":
-                self.update(copy_state="error", copy_error=str(exc), copy_cancel_requested=False)
+                self.update(copy_state="error", copy_error=message, copy_cancel_requested=False)
             if current["convert_state"] == "working":
-                self.update(convert_state="error", convert_error=str(exc))
-            self._error(str(exc))
+                self.update(convert_state="error", convert_error=message)
+            self._error(message)
         finally:
             if isinstance(command, ConvertJob):
                 with self._job_lock:
@@ -1057,6 +1123,7 @@ class Service:
                     state="ready",
                     message="Bestaande schijf gevonden en beschikbaar.",
                 )
+                self._check_disc_protection()
         except (OSError, drive.DriveError) as exc:
             self._error(f"Opstarten mislukt: {exc}")
 
@@ -1103,6 +1170,7 @@ class Service:
                         cfg.copy_files
                         and self._mounted
                         and self._disc
+                        and not self.snapshot()["css_protected"]
                         and self._handled_identity != self._disc.identity
                     ):
                         self._handled_identity = self._disc.identity
@@ -1126,13 +1194,12 @@ class Service:
                 )
             except (drive.DriveError, copy.CopyError, image.ImageError, OSError) as exc:
                 current = self.snapshot()
+                message = CSS_NOTICE if is_css_error(exc) else str(exc)
                 if current["copy_state"] == "copying":
-                    self.update(
-                        copy_state="error", copy_error=str(exc), copy_cancel_requested=False
-                    )
+                    self.update(copy_state="error", copy_error=message, copy_cancel_requested=False)
                 if current["image_state"] == "working":
-                    self.update(image_state="error", image_error=str(exc))
-                self._error(str(exc))
+                    self.update(image_state="error", image_error=message)
+                self._error(message)
             self.stop.wait(cfg.poll_seconds)
         try:
             if self._mounted:

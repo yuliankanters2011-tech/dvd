@@ -24,7 +24,7 @@ Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest e
 - Een cd/dvd-speler echt als beschrijfbare USB-stick of harde schijf voordoen.
 - Audio-cd's rippen naar MP3.
 - Lege cd's/dvd's beschrijven.
-- CSS/beveiligde film-dvd's omzetten. De ruwe `.VOB`-bestanden kunnen soms wel zichtbaar zijn, maar de container bevat geen decryptie en omzeilt geen beveiliging.
+- CSS/beveiligde film-dvd's omzetten. Vanaf 1.2.8 verschijnt vroeg: **“Deze dvd is CSS-beveiligd. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video.”** De container bevat geen decryptie en omzeilt geen beveiliging.
 - Echte DVD-Audio (AUDIO_TS/AOB) en audio-cd's zonder bestandssysteem. Het geluid van een normale DVD-Video staat in `VIDEO_TS/*.VOB`; kies daarvoor “Alleen geluid”.
 - DVD-menu's, meerdere camerahoeken tegelijk, shuffle-titels en het kiezen van een andere audiotrack dan de eerste. Bij een hoekblok wordt alleen hoek 1 bewaard.
 - Synology-modellen/DSM-versies zonder `cdrom`/`sr_mod`-ondersteuning. Docker kan geen ontbrekende NAS-kerneldriver repareren.
@@ -226,6 +226,8 @@ Versie **1.2.5** herstelt de celadrestabel (C_ADT) na de diagnose “De DVD-inde
 
 Versie **1.2.6** voegt de keuze “Alle ondersteunde titels in één MP4” toe bij **Titel**. De converter zet de ondersteunde titels achter elkaar in één MP4 en herkent een alles-afspelen-titel die dezelfde VOB-cellen hergebruikt, zodat afleveringen niet dubbel worden opgeslagen. Losse afleveringen, video/audio-modi, Films/Muziek, voortgang, annuleren en niet-overschrijven blijven werken. De marker vermeldt de opgenomen titelnummers. Werk bij naar **1.2.6** en klik **Bronnen verversen**; de bestaande import hoeft niet opnieuw gekopieerd.
 
+Versie **1.2.8** herkent CSS-beveiligde dvd's via de copyright-informatie van de speler, een begrensde controle van VOB-sectorkoppen en de kernel-sense `0x5 / 6F / 03`. Het dashboard en de logs tonen: **“Deze dvd is CSS-beveiligd. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video.”** Kopiëren, ISO maken en omzetten van zo'n live schijf worden vroeg geweigerd; onbeveiligde DVD-Video, gegevensschijven en losse videobestanden blijven werken.
+
 Versie **1.2.7** voegt **Slaapstand & draaisnelheid** toe: een handmatige slaap/wakker-knop, een instelbare automatische slaaptimer en een slider om de draaisnelheid van de usb-speler aan te vragen. Tijdens slaapstand pauzeert DVD Bridge de spelercontroles; de usb-voeding blijft aan en het stopcommando is best-effort. De bestaande import, ISO's en markers blijven ongewijzigd.
 
 ## Slaapstand en draaisnelheid
@@ -282,7 +284,8 @@ sudo docker compose logs --tail=100 dvd
 | `ongeldige tijdsduur` | Versie 1.2.3 of ouder telt de framerate-bits mee als frames; update naar 1.2.4. De melding bevat nu de tijdbytes |
 | `mist het adres van een videocel` | Versie 1.2.4 of ouder gebruikt `nr_of_vobs` als aantal celadressen; update naar 1.2.5. De melding bevat nu de vob/cel-id |
 | Live schijf geeft `I/O error`, NAS-kopie niet | Gebruik de NAS-bibliotheekbron. De live schijf/speler heeft leesfouten; controleer schijf, USB-kabel en voeding |
-| Conversie meldt beschadigd/beveiligd | Bron is mogelijk CSS-versleuteld, beschadigd of geen ondersteunde DVD-Video |
+| `Sense Key 0x5, ASC=0x6f ASCQ=0x3` of “CSS-beveiligd” | De speler weigert een versleutelde sector zonder authenticatie. Dit is CSS, geen gewone beschadiging. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video en omzeilt geen beveiliging |
+| Conversie meldt beschadigd/beveiligd | Bron is mogelijk beschadigd of geen ondersteunde DVD-Video; bij CSS verschijnt vanaf 1.2.8 de expliciete CSS-melding |
 | Dashboard niet bereikbaar | Container draait niet, poort is bezet, of firewall blokkeert poort 8080 |
 
 ## Beveiliging en gedrag
@@ -295,7 +298,7 @@ sudo docker compose logs --tail=100 dvd
 - ISO-maken gebruikt GNU ddrescue. Een beetje schade (standaard maximaal 0,5%) wordt automatisch opgeslagen en gemarkeerd in de naastgelegen `.json`. Bij zware schade kies je bewust **Toch doorgaan**; de ISO blijft dan gemarkeerd als beschadigd. Annuleren bewaart het verborgen deelresultaat plus mapfile om later te hervatten. Bestaande ISO's worden nooit overschreven.
 - De converter accepteert alleen bron-id's uit de vaste bronnenlijst en schrijft alleen naar de twee gekoppelde Jellyfin-mappen. FFmpeg wordt zonder shell aangestuurd.
 - MP4-publicatie gebeurt met een harde link die faalt als het doel al bestaat. De marker wordt apart gepubliceerd; bij een markerfout wordt de nieuwe MP4 teruggedraaid.
-- CSS wordt niet omzeild. DVD-Audio, menu's en shuffle-titels geven een uitleg in plaats van een stille mislukking.
+- CSS wordt niet omzeild. Vanaf 1.2.8 verschijnt vroeg **“Deze dvd is CSS-beveiligd. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video.”** en worden kopiëren, ISO maken en omzetten van de beveiligde live schijf geblokkeerd. DVD-Audio, menu's en shuffle-titels geven een uitleg in plaats van een stille mislukking.
 
 ## Ontwikkelen en testen
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import fcntl
 import logging
@@ -12,6 +13,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .protection import CSS_NOTICE, is_css_sense
+
 LOG = logging.getLogger("dvd.drive")
 
 CDROM_DRIVE_STATUS = 0x5326
@@ -21,6 +24,11 @@ CDROMCLOSETRAY = 0x5319
 CDROMSTOP = 0x5307
 CDROMSTART = 0x5308
 CDROM_SELECT_SPEED = 0x5322
+DVD_READ_STRUCT = 0x5390
+DVD_STRUCT_COPYRIGHT = 0x01
+# Size of the Linux dvd_struct union (largest member: dvd_manufact). The
+# copyright query uses only the first four bytes; no key or auth ioctl is sent.
+_DVD_STRUCT_SIZE = 2056
 CDSL_CURRENT = 0x7FFFFFFF
 CDS_DISC_OK = 4
 # Linux cdrom ioctl speed units. The sr driver multiplies a non-zero value
@@ -43,6 +51,33 @@ class DriveError(RuntimeError):
 
 class DriveUnsupportedError(DriveError):
     """The drive or USB bridge does not implement this control ioctl."""
+
+
+class DriveProtectedError(DriveError):
+    """The medium reports copy protection that DVD Bridge will not bypass."""
+
+
+def copyright_protection(device: Path) -> int | None:
+    """Read the drive's Copyright Protection System Type, or None if unavailable.
+
+    This is a read-only DVD_READ_STRUCT copyright-information query. It does not
+    perform DVD authentication and does not request disc/title keys. Values are
+    0=none, 1=CSS/CPPM, 2=CPRM; unsupported drives/bridges simply return None.
+    """
+    try:
+        fd = os.open(device, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        data = ctypes.create_string_buffer(_DVD_STRUCT_SIZE)
+        data[0] = bytes([DVD_STRUCT_COPYRIGHT])
+        fcntl.ioctl(fd, DVD_READ_STRUCT, data, True)
+        return ord(data[2])
+    except OSError as exc:
+        LOG.debug("Copyright-informatie van %s niet beschikbaar: %s", device, exc)
+        return None
+    finally:
+        os.close(fd)
 
 
 @dataclass(frozen=True)
@@ -148,6 +183,8 @@ def inspect_disc(device: Path) -> DiscInfo:
     filesystem = values.get("TYPE", "").lower()
     if filesystem not in {"iso9660", "udf"}:
         detail = result.stderr.strip()
+        if is_css_sense(detail):
+            raise DriveProtectedError(CSS_NOTICE)
         raise DriveError(
             "Geen leesbaar gegevensbestandssysteem gevonden. Gebruik een "
             "gegevens-cd/dvd met ISO 9660 of UDF. Audio-cd's, lege schijfjes "
@@ -195,6 +232,8 @@ def mount_disc(device: Path, target: Path, info: DiscInfo, puid: int, pgid: int)
     )
     if result.returncode != 0:
         stderr = result.stderr.strip()
+        if is_css_sense(stderr):
+            raise DriveProtectedError(CSS_NOTICE)
         hint = ""
         if "permission denied" in stderr.lower() or "operation not permitted" in stderr.lower():
             hint = " De container heeft SYS_ADMIN en mount-toestemming van DSM nodig."

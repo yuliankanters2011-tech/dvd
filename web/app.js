@@ -10,6 +10,7 @@ const stateLabels = {
   not_ready: ["Even wachten", "working"],
   mounting: ["Aankoppelen", "working"],
   error: ["Controle nodig", "error"],
+  protected: ["Beveiligd", "error"],
   sleeping: ["Slaapstand", "sleeping"],
   stopped: ["Gestopt", ""],
 };
@@ -21,6 +22,7 @@ const titleLabels = {
   not_ready: "De speler komt op gang",
   mounting: "De schijf wordt aangekoppeld",
   error: "Er is een probleem",
+  protected: "CSS-beveiligde dvd",
   sleeping: "De speler slaapt",
   stopped: "De service is gestopt",
   starting: "De speler wordt gecontroleerd",
@@ -204,7 +206,8 @@ function renderConvert(data) {
   const title = selectedTitle(source);
   const allSelected = Number($("convert-title").value) === -1;
   $("convert-button").disabled = busy || converting || data.copy_state === "copying"
-    || data.image_state === "working" || !title?.supported;
+    || data.image_state === "working" || !title?.supported
+    || (data.css_protected && source?.id === "disc");
   $("convert-button").textContent = allSelected ? "Alles in één MP4" : "Omzetten naar MP4";
   $("cancel-convert").classList.toggle("hidden", !converting);
   $("cancel-convert").disabled = busy;
@@ -239,12 +242,14 @@ function render(data) {
   const converting = data.convert_state === "working";
   const working = data.copy_state === "copying" || data.image_state === "working" || converting;
   const badge = $("state-badge");
-  badge.textContent = working ? "Bezig" : label;
-  badge.className = `badge ${working ? "working" : kind}`;
+  const protectedDisc = Boolean(data.css_protected);
+  badge.textContent = working ? "Bezig" : protectedDisc ? "Beveiligd" : label;
+  badge.className = `badge ${working ? "working" : protectedDisc ? "error" : kind}`;
   $("status-title").textContent = converting ? "Omzetten naar MP4"
     : data.image_state === "working" ? "ISO maken"
       : data.copy_state === "copying" ? "Bestanden kopiëren"
-        : titleLabels[data.state] || "DVD Bridge";
+        : protectedDisc ? "CSS-beveiligde dvd"
+          : titleLabels[data.state] || "DVD Bridge";
   $("status-message").textContent = data.message || "";
   $("disc-label").textContent = data.disc?.label || "—";
   $("disc-format").textContent = data.disc?.filesystem ? data.disc.filesystem.toUpperCase() : "—";
@@ -256,12 +261,12 @@ function render(data) {
   $("disc-visual").className = `disc-visual ${data.state === "ready" ? "ready" : ""} ${working ? "working" : ""}`;
   renderDrive(data);
 
-  const ready = data.state === "ready" && !data.drive_sleeping;
+  const ready = data.state === "ready" && !data.drive_sleeping && !protectedDisc;
   $("copy-button").disabled = busy || working || !ready || data.copy_state === "done";
   $("iso-button").disabled = busy || working || !ready || data.image_force_available;
   $("iso-button").textContent = data.image_resumable && !data.image_force_available ? "ISO hervatten" : "ISO maken";
-  $("close-button").disabled = busy || working || !["empty", "open", "error", "sleeping"].includes(data.state);
-  $("eject-button").disabled = busy || working || !["ready", "empty", "open", "error", "sleeping"].includes(data.state);
+  $("close-button").disabled = busy || working || !["empty", "open", "error", "protected", "sleeping"].includes(data.state);
+  $("eject-button").disabled = busy || working || !["ready", "empty", "open", "error", "protected", "sleeping"].includes(data.state);
   $("retry-button").classList.toggle("hidden", data.state !== "error");
   $("retry-button").disabled = busy || working;
 
@@ -301,8 +306,8 @@ function render(data) {
   $("cancel-iso").disabled = busy || data.image_cancel_requested;
   $("cancel-iso").textContent = data.image_force_available ? "Niet opslaan"
     : data.image_cancel_requested ? "Annuleren aangevraagd…" : "ISO annuleren";
-  $("force-iso").classList.toggle("hidden", !data.image_force_available);
-  $("force-iso").disabled = busy || working || !ready;
+  $("force-iso").classList.toggle("hidden", !data.image_force_available || protectedDisc);
+  $("force-iso").disabled = busy || working || !ready || protectedDisc;
   const imageFeedback = $("image-feedback");
   imageFeedback.className = "action-feedback";
   imageFeedback.textContent = "";
@@ -432,7 +437,7 @@ async function changeIdle() {
 
 async function startConversion() {
   const source = currentSource();
-  if (!source) return;
+  if (!source || source.protected || (latest?.css_protected && source.id === "disc")) return;
   const payload = {
     source_id: source.id,
     title: Number($("convert-title").value),

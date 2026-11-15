@@ -577,3 +577,52 @@ def test_combined_title_without_supported_titles_is_actionable(tmp_path):
     with pytest.raises(dvd.DvdError, match="geen ondersteunde titels"):
         source.title(dvd.ALL_TITLES)
     assert source.summary()["all_titles"] is None
+
+
+def test_css_marked_vob_blocks_entire_dvd_source(tmp_path):
+    directory = write_dvd(tmp_path, css=True)
+    source = dvd.inspect_source(directory)
+    assert source.protected is True
+    assert source.titles == ()
+    assert source.default_title == 0
+    assert source.note == dvd.CSS_NOTICE
+    assert source.summary()["protected"] is True
+    with pytest.raises(dvd.DvdError, match="CSS-beveiligd"):
+        source.title(1)
+
+
+def test_region_mask_and_ifo_bytes_are_not_css(tmp_path):
+    directory = write_dvd(tmp_path)
+    ifo = directory / "VIDEO_TS.IFO"
+    data = bytearray(ifo.read_bytes())
+    data[0x22:0x26] = bytes([0x00, 0xFD, 0x00, 0x30])
+    ifo.write_bytes(data)
+    source = dvd.inspect_source(directory)
+    assert source.protected is False
+    assert source.default_title == 1
+
+
+def test_mpeg1_system_stream_flag_is_not_css(tmp_path):
+    sector = bytearray(SECTOR)
+    sector[0:4] = b"\x00\x00\x01\xba"
+    sector[4] = 0x20  # MPEG-1 pack, not the DVD-Video MPEG-2 layout
+    sector[20] = 0x30
+    directory = write_dvd(tmp_path, vob_bytes={1: bytes(sector) * 2})
+    source = dvd.inspect_source(directory)
+    assert source.protected is False
+    assert source.default_title == 1
+
+
+def test_css_scan_finds_scrambled_sector_after_clear_intro(tmp_path):
+    clear = bytes(range(256)) * (SECTOR // 256)
+    marked = bytearray(clear)
+    marked[0:4] = b"\x00\x00\x01\xba"
+    marked[4] = 0x44
+    marked[13] = 0
+    marked[14:18] = b"\x00\x00\x01\xe0"
+    marked[18:20] = b"\x07\xea"
+    marked[20] = 0x10
+    directory = write_dvd(
+        tmp_path, vob_sectors={1: 96}, vob_bytes={1: clear * 64 + bytes(marked) * 32}
+    )
+    assert dvd.inspect_source(directory).protected is True

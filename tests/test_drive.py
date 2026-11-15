@@ -190,3 +190,22 @@ def test_control_open_failure_is_actionable(monkeypatch):
     monkeypatch.setattr(drive.os, "open", deny)
     with pytest.raises(drive.DriveError, match="Kan /dev/sr0 niet openen"):
         drive.spin_up(Path("/dev/sr0"))
+
+
+def test_inspect_disc_recognizes_css_sense(monkeypatch):
+    monkeypatch.setattr(
+        drive,
+        "run",
+        lambda *a, **k: completed("", "Sense Key : 0x5 ASC=0x6f ASCQ=0x3", 2),
+    )
+    with pytest.raises(drive.DriveProtectedError, match="CSS-beveiligd"):
+        drive.inspect_disc(Path("/dev/sr0"))
+
+
+def test_mount_recognizes_css_sense(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        drive, "run", lambda *a, **k: completed("", "Sense Key 0x5 ASC=6f ASCQ=03", 1)
+    )
+    info = drive.DiscInfo("id", "TEST", "udf", 100)
+    with pytest.raises(drive.DriveProtectedError, match="CSS-beveiligd"):
+        drive.mount_disc(Path("/dev/sr0"), tmp_path / "disc", info, 1000, 100)

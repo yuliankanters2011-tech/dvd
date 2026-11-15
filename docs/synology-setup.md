@@ -54,7 +54,9 @@ Open `http://<NAS-IP>:8085`. De containerpoort blijft 8080; alleen de NAS-poort 
 
 ## Updaten zonder Compose
 
-Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.7**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
+Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.8**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
+
+Versie **1.2.8** herkent CSS-beveiligde dvd's en toont vroeg: **“Deze dvd is CSS-beveiligd. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video.”** Kopiëren, ISO maken en omzetten van zo'n live schijf worden geweigerd voordat een lange leespoging begint. De melding staat ook in `/api/status`, `/api/media` (`skipped_sources`) en de containerlogs. Er wordt geen CSS-ontsleuteling toegevoegd.
 
 Versie **1.2.7** voegt **Slaapstand & draaisnelheid** toe: een handmatige slaap/wakker-knop, een instelbare automatische slaaptimer en een slider om de draaisnelheid van de usb-speler aan te vragen. Tijdens slaapstand pauzeert DVD Bridge de spelercontroles; de usb-voeding blijft aan en het stopcommando is best-effort. De bestaande import, ISO's en markers blijven ongewijzigd.
 
@@ -101,7 +103,7 @@ printf '\n'
 sudo docker exec dvd-bridge python3 -c 'from app import __version__; print("DVD Bridge versie:", __version__)'
 ```
 
-Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.7` te staan.
+Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.8` te staan.
 
 ## Bestandssystemen
 
@@ -158,6 +160,16 @@ sudo docker exec dvd-bridge python3 -m app.convert \
 sudo docker exec dvd-bridge python3 -m app.convert \
   --source /srv/dvd/disc --title -1 --mode video --destination films --name "Hele dvd"
 ```
+
+## CSS-beveiligde dvd's
+
+Vanaf **1.2.8** verschijnt bij een CSS-beveiligde live schijf vroeg:
+
+> Deze dvd is CSS-beveiligd. DVD Bridge ondersteunt alleen onbeveiligde DVD-Video.
+
+Dezelfde melding staat in `/api/status`, onder `/api/media` bij `skipped_sources` en in `sudo docker logs --tail=100 dvd-bridge`. Kopiëren, ISO maken en omzetten van die live schijf worden geweigerd voordat een lange leespoging begint. Uitwerpen, lade sluiten en slaapstand blijven beschikbaar.
+
+Herken je in `dmesg` of de logs `Sense Key 0x5` met `ASC=0x6f ASCQ=0x3`, dan weigert de speler een versleutelde sector zonder authenticatie. Dat is CSS, geen gewone krasser of usb-voedingsfout. DVD Bridge vraagt geen sleutels aan en omzeilt de beveiliging niet. Gebruik een onbeveiligde DVD-Video of een gegevensschijf; onbeveiligde imports en losse videobestanden blijven gewoon werken.
 
 ## Virtuele ISO-schijf in DSM
 

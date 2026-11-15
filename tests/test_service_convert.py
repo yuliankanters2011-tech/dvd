@@ -300,3 +300,77 @@ def test_all_titles_snapshot_lists_kept_titles_and_message(svc, monkeypatch):
     assert snapshot["convert_title"] == dvd.ALL_TITLES
     assert snapshot["convert_titles"] == [1, 2]
     assert snapshot["convert_file"].endswith("serie - Alle titels.mp4")
+
+
+def test_css_disc_blocks_requests_and_keeps_library_sources(svc, monkeypatch):
+    write_dvd(svc.config.library_dir / "onbeveiligd")
+    svc._mounted = True
+    svc._disc = drive.DiscInfo("id", "MADAGASCAR", "udf", 100)
+    svc.update(css_protected=True, state="protected", message=convert.dvd.CSS_NOTICE)
+
+    original = dvd.inspect_source
+
+    def guard(path, *a, **k):
+        if path == svc.config.mountpoint:
+            raise AssertionError("protected disc must not be read")
+        return original(path, *a, **k)
+
+    monkeypatch.setattr(dvd, "inspect_source", guard)
+    media = svc.media()
+    assert [item["label"] for item in media["sources"]] == ["onbeveiligd"]
+    assert media["skipped_sources"][0]["reason"] == convert.dvd.CSS_NOTICE
+    for command in ("copy", "iso", "iso_force"):
+        with pytest.raises(RuntimeError, match="CSS-beveiligd"):
+            svc.request(command)
+    with pytest.raises(RuntimeError, match="CSS-beveiligd"):
+        svc.request_conversion("disc", 0, "video", "films")
+    assert svc.commands.empty()
+
+
+def test_mount_copyright_query_sets_notice_and_blocks_copy(svc, monkeypatch, caplog):
+    monkeypatch.setattr(
+        drive, "inspect_disc", lambda device: drive.DiscInfo("id", "TEST", "udf", 100)
+    )
+    monkeypatch.setattr(drive, "mount_disc", lambda *a: None)
+    monkeypatch.setattr(drive, "copyright_protection", lambda device: 1)
+
+    def forbidden(*a, **k):
+        raise AssertionError("copy must not start")
+
+    monkeypatch.setattr(service.copy, "import_disc", forbidden)
+    with caplog.at_level(logging.WARNING, logger="dvd.service"):
+        svc._mount()
+    snapshot = svc.snapshot()
+    assert snapshot["css_protected"] is True
+    assert snapshot["state"] == "protected"
+    assert snapshot["message"] == convert.dvd.CSS_NOTICE
+    assert any(record.getMessage() == convert.dvd.CSS_NOTICE for record in caplog.records)
+    svc._command("copy")
+    assert svc.snapshot()["copy_error"] == convert.dvd.CSS_NOTICE
+
+
+def test_library_css_is_skipped_and_conversion_refused_without_ffmpeg(svc, monkeypatch):
+    directory = write_dvd(svc.config.library_dir / "beveiligd", css=True)
+    media = svc.media()
+    assert media["sources"] == []
+    assert media["skipped_sources"][0]["reason"] == convert.dvd.CSS_NOTICE
+    ident = service.hashlib.sha256(str(directory.resolve()).encode()).hexdigest()[:16]
+
+    def forbidden(*a, **k):
+        raise AssertionError("ffmpeg must not start for a protected source")
+
+    monkeypatch.setattr(convert, "_tool", forbidden)
+    svc._command(service.ConvertJob(ident, 0, "video", "films"))
+    snapshot = svc.snapshot()
+    assert snapshot["convert_state"] == "error"
+    assert snapshot["convert_error"] == convert.dvd.CSS_NOTICE
+    assert snapshot["css_protected"] is False
+
+
+def test_kernel_sense_error_marks_disc_protected(svc):
+    svc._error("sr0: Sense Key 0x5 ASC=0x6f ASCQ=0x3")
+    snapshot = svc.snapshot()
+    assert snapshot["css_protected"] is True
+    assert snapshot["state"] == "protected"
+    assert snapshot["message"] == convert.dvd.CSS_NOTICE
+    assert snapshot["error"] == ""

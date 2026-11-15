@@ -42,6 +42,7 @@ def write_dvd(
     playback_modes: dict[int, int] | None = None,
     vob_sectors: dict[int, int] | None = None,
     vob_bytes: dict[int, bytes] | None = None,
+    css: bool = False,
 ) -> Path:
     """Create VIDEO_TS.
 
@@ -49,6 +50,7 @@ def write_dvd(
     pgcs: (cell indexes, next_pgc); titles: (vts_ttn, pgcn, chapters)
     title_flags: VMG playback-type bytes, in title order (default sequential)
     playback_modes: PGC number -> pg_playback_mode byte (default sequential)
+    css: mark the first title VOB sector with a clear MPEG-2 PES scrambling flag
     """
     directory = root / "VIDEO_TS"
     directory.mkdir(parents=True, exist_ok=True)
@@ -130,6 +132,15 @@ def write_dvd(
 
     for part, sectors in vob_sectors.items():
         data = (vob_bytes or {}).get(part, bytes(range(256)) * (sectors * SECTOR // 256))
+        if css and part == 1 and part not in (vob_bytes or {}):
+            marked = bytearray(data)
+            marked[0:4] = b"\x00\x00\x01\xba"
+            marked[4] = 0x44  # MPEG-2 pack header
+            marked[13] = 0  # no pack stuffing
+            marked[14:18] = b"\x00\x00\x01\xe0"
+            marked[18:20] = b"\x07\xea"
+            marked[20] = 0x30  # PES_scrambling_control
+            data = bytes(marked)
         if len(data) % SECTOR:
             raise ValueError("fixture VOB must be sector-aligned")
         (directory / f"VTS_01_{part}.VOB").write_bytes(data)
