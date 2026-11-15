@@ -199,3 +199,18 @@ def test_iso_force_requires_damage_prompt(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         post_json(httpd, "/api/command", {"command": "iso_force"})
     assert exc.value.code == 409  # no mounted disc in this fixture
+
+
+def test_convert_endpoint_accepts_all_titles(server):
+    httpd, service = server
+    with post_json(httpd, "/api/convert", {"source_id": "abc", "title": -1}) as response:
+        assert response.status == 202
+    assert service.commands.get_nowait().title == -1
+
+
+@pytest.mark.parametrize("title", [-2, 100, True, "1", 1.0])
+def test_convert_endpoint_rejects_invalid_title_numbers(server, title):
+    httpd, _ = server
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/convert", {"source_id": "abc", "title": title})
+    assert exc.value.code == 400

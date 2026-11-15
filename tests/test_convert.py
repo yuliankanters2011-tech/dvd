@@ -1,3 +1,4 @@
+import itertools
 import json
 import os
 import shutil
@@ -232,3 +233,104 @@ def test_cli_output_dir_and_destination_are_exclusive(tmp_path, media):
     )
     assert result.returncode == 2
     assert "niet allebei" in result.stderr
+
+
+def episode_dvd(tmp_path, media):
+    data = media[1].read_bytes()
+    sectors = len(data) // SECTOR
+    directory = write_dvd(
+        tmp_path,
+        cells=[
+            (1, 1, 0, sectors - 1, 0, 2),
+            (2, 1, sectors, 2 * sectors - 1, 0, 2),
+        ],
+        pgcs=[([0], 0), ([1], 0), ([0, 1], 0)],
+        titles=[(1, 1, 1), (2, 2, 1), (3, 3, 2)],
+        vob_sectors={1: sectors, 2: sectors},
+        vob_bytes={1: data, 2: data},
+    )
+    return dvd.inspect_source(directory)
+
+
+@pytest.mark.parametrize("mode", ["video", "audio"])
+def test_all_titles_conversion_joins_parts_once_and_is_idempotent(tmp_path, media, tools, mode):
+    source = episode_dvd(tmp_path, media)
+    destination = tmp_path / "films"
+    state = tmp_path / "state"
+    progress = []
+    result = convert.convert_title(
+        source,
+        dvd.ALL_TITLES,
+        mode,
+        destination,
+        state,
+        tools,
+        threading.Event(),
+        progress.append,
+        name="DVD test",
+    )
+    assert result.path == destination / "DVD test - Alle titels.mp4"
+    assert result.duration == pytest.approx(4.0, abs=0.5)
+    assert progress[-1].percent == 100
+    assert all(a.percent <= b.percent for a, b in itertools.pairwise(progress))
+    marker = json.loads((destination / "DVD test - Alle titels.dvd-bridge.json").read_text())
+    assert marker["title"] == dvd.ALL_TITLES
+    assert marker["titles"] == [1, 2]
+    assert marker["complete"] is True and marker["mode"] == mode
+    assert marker["bytes"] == result.size_bytes
+    report = convert._probe(result.path, tools.ffprobe)
+    if mode == "audio":
+        assert [stream["codec_type"] for stream in report["streams"]] == ["audio"]
+    stamp = result.path.stat().st_mtime_ns
+    again = convert.convert_title(
+        source, dvd.ALL_TITLES, mode, destination, state, tools, threading.Event(), name="DVD test"
+    )
+    assert again.path == result.path
+    assert result.path.stat().st_mtime_ns == stamp
+    assert not list(destination.glob(".*.partial.mp4"))
+    assert not list(destination.glob(".dvd-bridge-*.parts.*"))
+
+
+def test_all_titles_existing_destination_is_never_overwritten(tmp_path, media, tools):
+    source = episode_dvd(tmp_path, media)
+    destination = tmp_path / "films"
+    destination.mkdir()
+    existing = destination / "film - Alle titels.mp4"
+    existing.write_bytes(b"blijf van mijn bestand af")
+    with pytest.raises(convert.ConvertError, match="niets overschreven"):
+        convert.convert_title(
+            source,
+            dvd.ALL_TITLES,
+            "video",
+            destination,
+            tmp_path / "state",
+            tools,
+            threading.Event(),
+            name="film",
+        )
+    assert existing.read_bytes() == b"blijf van mijn bestand af"
+    assert not list(destination.glob(".dvd-bridge-*.parts.*"))
+
+
+def test_all_titles_cancel_cleans_staging_and_partial(tmp_path, media, tools):
+    source = episode_dvd(tmp_path, media)
+    destination = tmp_path / "films"
+    stop = threading.Event()
+
+    def cancel(_progress):
+        stop.set()
+
+    with pytest.raises(convert.ConvertError, match="afgebroken"):
+        convert.convert_title(
+            source,
+            dvd.ALL_TITLES,
+            "video",
+            destination,
+            tmp_path / "state",
+            tools,
+            stop,
+            cancel,
+        )
+    assert not list(destination.glob("*.mp4"))
+    assert not list(destination.glob(".*.partial.mp4"))
+    assert not list(destination.glob(".dvd-bridge-*.parts.*"))

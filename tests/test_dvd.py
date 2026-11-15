@@ -509,3 +509,71 @@ def test_knight_rider_like_titles_keep_longest_title_selectable(tmp_path):
     assert source.default_title == 4
     assert source.title(1).duration == pytest.approx(2777.8)
     assert source.title(4).duration == pytest.approx(8319.04)
+
+
+def test_combined_title_drops_redundant_play_all_and_keeps_disc_order(tmp_path):
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, 1, 0, 1, 0, 2), (1, 2, 2, 3, 0, 3)],
+        pgcs=[([0], 0), ([1], 0), ([0, 1], 0)],
+        titles=[(1, 1, 1), (2, 2, 1), (3, 3, 2)],
+        vob_sectors={1: 4},
+    )
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 3
+    combined = source.title(dvd.ALL_TITLES)
+    assert combined.number == dvd.ALL_TITLES
+    assert combined.title_numbers == (1, 2)
+    assert combined.duration == 5
+    assert combined.chapters == 2
+    assert combined.size_bytes == 4 * SECTOR
+    assert combined.segments == source.title(1).segments + source.title(2).segments
+    summary = source.summary()["all_titles"]
+    assert summary["supported"] is True
+    assert summary["title_numbers"] == [1, 2]
+    assert summary["duration_seconds"] == 5
+
+
+def test_combined_title_drops_play_all_with_different_cell_split(tmp_path):
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, 1, 0, 1, 0, 2), (1, 2, 2, 3, 0, 3), (1, 3, 0, 3, 0, 5)],
+        pgcs=[([0], 0), ([1], 0), ([2], 0)],
+        titles=[(1, 1, 1), (2, 2, 1), (3, 3, 1)],
+        vob_sectors={1: 4},
+    )
+    combined = dvd.inspect_source(directory).title(dvd.ALL_TITLES)
+    assert combined.title_numbers == (1, 2)
+    assert combined.duration == 5
+    assert combined.size_bytes == 4 * SECTOR
+
+
+def test_combined_title_keeps_partial_overlap_and_skips_unsupported(tmp_path):
+    path = tmp_path / "VTS_01_1.VOB"
+    source = dvd.Source(
+        tmp_path,
+        "serie",
+        "dvd",
+        (
+            dvd.Title(1, 2, 1, (dvd.Segment(path, 0, 2048),)),
+            dvd.Title(2, 3, 1, (dvd.Segment(path, 1024, 2048),)),
+            dvd.Title(3, 0, 1, (), False, "shuffle"),
+        ),
+    )
+    combined = source.title(dvd.ALL_TITLES)
+    assert combined.title_numbers == (1, 2)
+    assert combined.duration == 5
+    assert combined.segments == source.title(1).segments + source.title(2).segments
+    assert source.summary()["all_titles"]["title_numbers"] == [1, 2]
+
+
+def test_combined_title_without_supported_titles_is_actionable(tmp_path):
+    source = dvd.Source(
+        tmp_path,
+        "leeg",
+        "dvd",
+        (dvd.Title(1, 0, 1, (), False, "Deze titel wordt niet ondersteund"),),
+    )
+    with pytest.raises(dvd.DvdError, match="geen ondersteunde titels"):
+        source.title(dvd.ALL_TITLES)
+    assert source.summary()["all_titles"] is None

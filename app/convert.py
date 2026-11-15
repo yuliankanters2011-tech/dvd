@@ -19,6 +19,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unicodedata
@@ -102,6 +103,8 @@ def _tool(name: str) -> str:
 def _fingerprint(source: dvd.Source, title: dvd.Title, mode: str, settings: Settings) -> str:
     parts = [str(source.path.resolve()), str(title.number), mode, settings.preset]
     parts.extend([str(settings.crf), str(settings.audio_bitrate)])
+    if title.title_numbers:
+        parts.append(",".join(str(number) for number in title.title_numbers))
     for segment in title.segments:
         try:
             stat = segment.path.stat()
@@ -327,6 +330,164 @@ def _publish_no_replace(temporary: Path, destination: Path) -> None:
     temporary.unlink(missing_ok=True)
 
 
+def _concat_command(ffmpeg: str, list_path: Path, partial: Path, mode: str) -> list[str]:
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-nostats",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(list_path),
+    ]
+    if mode == "video":
+        command.extend(["-map", "0:v:0", "-map", "0:a:0?"])
+    else:
+        command.extend(["-map", "0:a:0", "-vn"])
+    command.extend(["-c", "copy", "-movflags", "+faststart", str(partial)])
+    return command
+
+
+def _run_concat(command: list[str], cwd: Path, stop: threading.Event, log_path: Path) -> None:
+    with log_path.open("w", encoding="utf-8") as log_file:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=log_file,
+            cwd=cwd,
+            start_new_session=True,
+        )
+        started = time.monotonic()
+        try:
+            while True:
+                if stop.is_set():
+                    raise ConvertError("Omzetten afgebroken")
+                try:
+                    returncode = process.wait(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() - started > 300:
+                        raise ConvertError(
+                            "FFmpeg reageerde 5 minuten niet tijdens het samenvoegen; "
+                            "controleer schijf en USB-voeding"
+                        ) from None
+            if returncode != 0:
+                tail = _log_tail(log_path)
+                raise ConvertError(
+                    f"FFmpeg stopte met code {returncode} tijdens het samenvoegen. "
+                    "De titels hebben mogelijk verschillende audio-/videosporen. "
+                    f"Log: {log_path.name} in de state-volume."
+                    + (f" Laatste melding: {tail.splitlines()[-1]}" if tail else "")
+                )
+        except BaseException:
+            _terminate(process)
+            raise
+
+
+def _build_combined(
+    source: dvd.Source,
+    title: dvd.Title,
+    mode: str,
+    destination_dir: Path,
+    state_dir: Path,
+    settings: Settings,
+    stop: threading.Event,
+    progress: ProgressCallback | None,
+    partial: Path,
+    run_id: str,
+    identity: str,
+    puid: int | None,
+    pgid: int | None,
+    expected: float,
+    log_path: Path,
+) -> None:
+    """Encode kept titles one by one, then losslessly join the MP4 parts.
+
+    Sequential parts avoid feeding timestamp resets from different VTS/VOB
+    titles into one MPEG demuxer. The hidden staging directory is removed on
+    success, cancel and failure; only the final MP4/marker are published.
+    """
+    total_bytes = title.size_bytes
+    completed_bytes = 0
+    completed_duration = 0.0
+    with tempfile.TemporaryDirectory(
+        prefix=f".dvd-bridge-{run_id}.parts.", dir=destination_dir
+    ) as staging_name:
+        staging = Path(staging_name)
+        parts: list[Path] = []
+        for index, number in enumerate(title.title_numbers, start=1):
+            if stop.is_set():
+                raise ConvertError("Omzetten afgebroken")
+            part_title = source.title(number)
+
+            def part_progress(
+                value: Progress,
+                base_duration=completed_duration,
+                base_bytes=completed_bytes,
+            ) -> None:
+                if progress is None:
+                    return
+                out_seconds = base_duration + value.out_seconds
+                read = min(total_bytes, base_bytes + value.bytes_read)
+                if expected > 0:
+                    percent = min(99, round(out_seconds * 100 / expected))
+                    eta = (
+                        round((expected - out_seconds) / value.speed)
+                        if value.speed > 0 and out_seconds < expected
+                        else None
+                    )
+                else:
+                    percent = min(99, round(read * 100 / total_bytes)) if total_bytes else 0
+                    eta = None
+                progress(Progress(percent, out_seconds, value.speed, eta, read, total_bytes))
+
+            result = convert_title(
+                source,
+                number,
+                mode,
+                staging,
+                state_dir,
+                settings,
+                stop,
+                part_progress,
+                name=f"deel-{index:03d}",
+                identity=identity,
+                puid=puid,
+                pgid=pgid,
+            )
+            parts.append(result.path)
+            completed_bytes += part_title.size_bytes
+            completed_duration += result.duration
+        if stop.is_set():
+            raise ConvertError("Omzetten afgebroken")
+        if progress:
+            progress(
+                Progress(
+                    99,
+                    completed_duration,
+                    0.0,
+                    None,
+                    total_bytes,
+                    total_bytes,
+                )
+            )
+        list_path = staging / "concat.txt"
+        list_path.write_text("".join(f"file '{part.name}'\n" for part in parts), encoding="utf-8")
+        concat_log = log_path.parent / f"{log_path.stem}.concat.log"
+        _run_concat(
+            _concat_command(settings.ffmpeg, list_path, partial, mode),
+            staging,
+            stop,
+            concat_log,
+        )
+
+
 def convert_title(
     source: dvd.Source,
     title_number: int,
@@ -357,7 +518,9 @@ def convert_title(
     destination_dir.mkdir(parents=True, exist_ok=True)
     state_dir.mkdir(parents=True, exist_ok=True)
     base = safe_media_name(name or source.label)
-    if source.kind == "dvd" and title.number != source.default_title:
+    if title.number == dvd.ALL_TITLES:
+        base = safe_media_name(f"{base} - Alle titels")
+    elif source.kind == "dvd" and title.number != source.default_title:
         base = safe_media_name(f"{base} - Titel {title.number:02d}")
     destination = destination_dir / f"{base}.mp4"
     marker = destination_dir / f"{base}{MARKER_SUFFIX}"
@@ -391,6 +554,9 @@ def convert_title(
         if mode == "video"
         else title.size_bytes // 4 + 64 * 1024 * 1024
     )
+    if title.number == dvd.ALL_TITLES and mode == "audio":
+        # Keep the encoded parts and the joined copy on the same volume.
+        reserve = title.size_bytes // 2 + 64 * 1024 * 1024
     if shutil.disk_usage(destination_dir).free < reserve:
         raise ConvertError("Onvoldoende vrije ruimte in de Jellyfin-doelmap")
 
@@ -399,98 +565,129 @@ def convert_title(
     marker_temp = destination_dir / f".{base}.{run_id}.marker.json"
     log_path = state_dir / f"{base}-{job_identity[:10]}.ffmpeg.log"
     expected = _expected_duration(source, title, ffprobe)
-    use_pipe = source.kind == "dvd"
-    command = _command(ffmpeg, source, mode, settings, partial, use_pipe)
-    LOG.info("Omzetten naar %s: %s titel %d (%s)", destination, source.label, title.number, mode)
+    combined = title.number == dvd.ALL_TITLES
+    use_pipe = source.kind == "dvd" and not combined
+    command = [] if combined else _command(ffmpeg, source, mode, settings, partial, use_pipe)
+    LOG.info(
+        "Omzetten naar %s: %s %s (%s)",
+        destination,
+        source.label,
+        "alle ondersteunde titels" if combined else f"titel {title.number}",
+        mode,
+    )
     sent = [0]
     errors: list[str] = []
     feeder: threading.Thread | None = None
     process: subprocess.Popen | None = None
     try:
-        with log_path.open("w", encoding="utf-8") as log_file:
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE if use_pipe else subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=log_file,
-                bufsize=0,
-                start_new_session=True,
+        if combined:
+            _build_combined(
+                source,
+                title,
+                mode,
+                destination_dir,
+                state_dir,
+                settings,
+                stop,
+                progress,
+                partial,
+                run_id,
+                identity,
+                puid,
+                pgid,
+                expected,
+                log_path,
             )
-            if use_pipe:
-                feeder = threading.Thread(
-                    target=_feed,
-                    args=(process, title.segments, stop, sent, errors),
-                    name="dvd-ffmpeg-feed",
-                    daemon=True,
+            returncode = 0
+            sent[0] = title.size_bytes
+        else:
+            with log_path.open("w", encoding="utf-8") as log_file:
+                process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.PIPE if use_pipe else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=log_file,
+                    bufsize=0,
+                    start_new_session=True,
                 )
-                feeder.start()
-            out_seconds = 0.0
-            speed = 0.0
-            last_output = time.monotonic()
-            last_report = 0.0
-            eof = False
-            while True:
-                if stop.is_set():
-                    raise ConvertError("Omzetten afgebroken")
-                streams = [process.stdout] if process.stdout and not eof else []
-                ready = select.select(streams, [], [], 0.5)[0]
-                if ready:
-                    raw = process.stdout.readline()
-                    if raw:
-                        last_output = time.monotonic()
-                        line = raw.decode("utf-8", errors="replace")
-                        key, _, value = line.strip().partition("=")
-                        if key == "out_time_us" and value.lstrip("-").isdigit():
-                            out_seconds = max(0.0, int(value) / 1_000_000)
-                        elif key == "speed":
-                            try:
-                                speed = max(0.0, float(value.strip().rstrip("x")))
-                            except ValueError:
-                                speed = 0.0
-                    else:
-                        eof = True
-                now = time.monotonic()
-                if progress and now - last_report >= 0.5:
-                    if expected > 0:
-                        percent = min(99, round(out_seconds * 100 / expected))
-                        eta = (
-                            round((expected - out_seconds) / speed)
-                            if speed > 0 and out_seconds < expected
-                            else None
-                        )
-                    else:
-                        percent = (
-                            min(99, round(sent[0] * 100 / title.size_bytes))
-                            if title.size_bytes
-                            else 0
-                        )
-                        eta = None
-                    progress(Progress(percent, out_seconds, speed, eta, sent[0], title.size_bytes))
-                    last_report = now
-                if process.poll() is not None and eof:
-                    break
-                if now - last_output > 300:
-                    raise ConvertError(
-                        "FFmpeg reageerde 5 minuten niet; controleer schijf en USB-voeding"
+                if use_pipe:
+                    feeder = threading.Thread(
+                        target=_feed,
+                        args=(process, title.segments, stop, sent, errors),
+                        name="dvd-ffmpeg-feed",
+                        daemon=True,
                     )
-            returncode = process.returncode
-        if feeder:
-            feeder.join(timeout=5)
-        if stop.is_set():
-            raise ConvertError("Omzetten afgebroken")
-        if errors:
-            raise ConvertError(errors[0])
-        if use_pipe and sent[0] != title.size_bytes:
-            raise ConvertError(
-                "De DVD-titel is niet volledig gelezen; controleer schijf en USB-verbinding"
-            )
-        if returncode != 0:
-            tail = _log_tail(log_path)
-            raise ConvertError(
-                f"FFmpeg stopte met code {returncode}. De bron kan beschadigd of beveiligd zijn, "
-                f"of bevat geen ondersteund geluid/beeld. Log: {log_path.name} in de state-volume."
-                + (f" Laatste melding: {tail.splitlines()[-1]}" if tail else "")
-            )
+                    feeder.start()
+                out_seconds = 0.0
+                speed = 0.0
+                last_output = time.monotonic()
+                last_report = 0.0
+                eof = False
+                while True:
+                    if stop.is_set():
+                        raise ConvertError("Omzetten afgebroken")
+                    streams = [process.stdout] if process.stdout and not eof else []
+                    ready = select.select(streams, [], [], 0.5)[0]
+                    if ready:
+                        raw = process.stdout.readline()
+                        if raw:
+                            last_output = time.monotonic()
+                            line = raw.decode("utf-8", errors="replace")
+                            key, _, value = line.strip().partition("=")
+                            if key == "out_time_us" and value.lstrip("-").isdigit():
+                                out_seconds = max(0.0, int(value) / 1_000_000)
+                            elif key == "speed":
+                                try:
+                                    speed = max(0.0, float(value.strip().rstrip("x")))
+                                except ValueError:
+                                    speed = 0.0
+                        else:
+                            eof = True
+                    now = time.monotonic()
+                    if progress and now - last_report >= 0.5:
+                        if expected > 0:
+                            percent = min(99, round(out_seconds * 100 / expected))
+                            eta = (
+                                round((expected - out_seconds) / speed)
+                                if speed > 0 and out_seconds < expected
+                                else None
+                            )
+                        else:
+                            percent = (
+                                min(99, round(sent[0] * 100 / title.size_bytes))
+                                if title.size_bytes
+                                else 0
+                            )
+                            eta = None
+                        progress(
+                            Progress(percent, out_seconds, speed, eta, sent[0], title.size_bytes)
+                        )
+                        last_report = now
+                    if process.poll() is not None and eof:
+                        break
+                    if now - last_output > 300:
+                        raise ConvertError(
+                            "FFmpeg reageerde 5 minuten niet; controleer schijf en USB-voeding"
+                        )
+                returncode = process.returncode
+            if feeder:
+                feeder.join(timeout=5)
+            if stop.is_set():
+                raise ConvertError("Omzetten afgebroken")
+            if errors:
+                raise ConvertError(errors[0])
+            if use_pipe and sent[0] != title.size_bytes:
+                raise ConvertError(
+                    "De DVD-titel is niet volledig gelezen; controleer schijf en USB-verbinding"
+                )
+            if returncode != 0:
+                tail = _log_tail(log_path)
+                raise ConvertError(
+                    f"FFmpeg stopte met code {returncode}. De bron kan beschadigd of beveiligd "
+                    f"zijn, of bevat geen ondersteund geluid/beeld. "
+                    f"Log: {log_path.name} in de state-volume."
+                    + (f" Laatste melding: {tail.splitlines()[-1]}" if tail else "")
+                )
         report = _probe(partial, ffprobe)
         streams = report.get("streams", [])
         duration = float(report.get("format", {}).get("duration", 0) or 0)
@@ -520,6 +717,7 @@ def convert_title(
             "source": str(source.path),
             "label": source.label,
             "title": title.number,
+            "titles": list(title.title_numbers) if combined else [title.number],
             "mode": mode,
             "bytes": size,
             "duration": duration,
@@ -559,7 +757,12 @@ def main(argv: list[str] | None = None) -> int:
         "--source", required=True, type=Path, help="VIDEO_TS-map, dvd-root of TS/VOB-bestand"
     )
     parser.add_argument(
-        "--title", type=int, default=0, help="Titelnummer; 0 kiest de langste titel"
+        "--title",
+        type=int,
+        default=0,
+        help=(
+            "Titelnummer; 0 kiest de langste titel, -1 bewaart alle ondersteunde titels in één MP4"
+        ),
     )
     parser.add_argument("--mode", choices=sorted(MODES), default="video")
     parser.add_argument("--destination", choices=sorted(DESTINATIONS), help="films of music")

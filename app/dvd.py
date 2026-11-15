@@ -7,6 +7,7 @@ The sector layout follows the public DVD-Video IFO structures used by libdvdread
 
 from __future__ import annotations
 
+import contextlib
 import re
 import struct
 from dataclasses import dataclass
@@ -15,6 +16,9 @@ from pathlib import Path
 SECTOR = 2048
 MAX_IFO = 8 * 1024 * 1024
 VIDEO_SUFFIXES = {".ts", ".vob", ".mpg", ".mpeg"}
+# Selection sentinel for "all supported titles in one MP4". Ordinary title
+# numbers stay 1..99; 0 keeps meaning "the longest supported title".
+ALL_TITLES = -1
 
 
 class DvdError(ValueError):
@@ -36,13 +40,16 @@ class Title:
     segments: tuple[Segment, ...]
     supported: bool = True
     reason: str = ""
+    # Only set on the synthetic ALL_TITLES selection: the supported titles
+    # that contributed fresh video ranges, in playback order.
+    title_numbers: tuple[int, ...] = ()
 
     @property
     def size_bytes(self) -> int:
         return sum(segment.size for segment in self.segments)
 
     def summary(self) -> dict:
-        return {
+        result = {
             "number": self.number,
             "duration_seconds": round(self.duration, 3),
             "chapters": self.chapters,
@@ -50,6 +57,31 @@ class Title:
             "supported": self.supported,
             "reason": self.reason,
         }
+        if self.number == ALL_TITLES:
+            result["title_numbers"] = list(self.title_numbers)
+        return result
+
+
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _covered(segments: tuple[Segment, ...], coverage: dict[Path, list[tuple[int, int]]]) -> bool:
+    for segment in segments:
+        ranges = coverage.get(segment.path, [])
+        start, end = segment.offset, segment.offset + segment.size
+        for low, high in ranges:
+            if low <= start and high >= end:
+                break
+        else:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -65,7 +97,40 @@ class Source:
         usable = [title for title in self.titles if title.supported]
         return max(usable, key=lambda title: title.duration).number if usable else 0
 
+    def combined_title(self) -> Title:
+        """Select every supported title once, without a redundant play-all title.
+
+        DVDs often expose both individual episodes and one longer title that
+        reuses exactly the same VOB cells. Prefer the shorter titles while
+        building a byte-range cover, then emit the kept titles in disc order.
+        A title is dropped only when all of its ranges are already covered;
+        partial overlap (a shared intro, for example) is kept intact.
+        """
+        usable = [title for title in self.titles if title.supported and title.segments]
+        if not usable:
+            raise DvdError("Deze bron bevat geen ondersteunde titels om samen te voegen")
+        coverage: dict[Path, list[tuple[int, int]]] = {}
+        kept: list[Title] = []
+        for title in sorted(usable, key=lambda item: (item.size_bytes, item.number)):
+            if _covered(title.segments, coverage):
+                continue
+            kept.append(title)
+            for segment in title.segments:
+                ranges = coverage.setdefault(segment.path, [])
+                ranges.append((segment.offset, segment.offset + segment.size))
+                coverage[segment.path] = _merge_ranges(ranges)
+        kept.sort(key=lambda item: item.number)
+        return Title(
+            ALL_TITLES,
+            sum(title.duration for title in kept),
+            sum(title.chapters for title in kept),
+            tuple(segment for title in kept for segment in title.segments),
+            title_numbers=tuple(title.number for title in kept),
+        )
+
     def title(self, number: int = 0) -> Title:
+        if number == ALL_TITLES:
+            return self.combined_title()
         wanted = number or self.default_title
         for title in self.titles:
             if title.number == wanted:
@@ -75,6 +140,10 @@ class Source:
         raise DvdError("Kies een geldige titel uit de lijst")
 
     def summary(self) -> dict:
+        all_titles = None
+        if sum(title.supported for title in self.titles) > 1:
+            with contextlib.suppress(DvdError):
+                all_titles = self.combined_title().summary()
         return {
             "label": self.label,
             "kind": self.kind,
@@ -82,6 +151,7 @@ class Source:
             "default_title": self.default_title,
             "title_count": len(self.titles),
             "titles": [title.summary() for title in self.titles],
+            "all_titles": all_titles,
         }
 
 
