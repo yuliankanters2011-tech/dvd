@@ -113,7 +113,10 @@ def write_dvd(
         struct.pack(">HBBII", cells[index][0], cells[index][1], 0, cells[index][2], cells[index][3])
         for index in sorted(used)
     )
-    c_adt = _table(c_entries, len(used))
+    # C_ADT's first field is nr_of_vobs, not the number of cell addresses.
+    # A single VOB can contain many cells; the table length carries the count.
+    vob_count = len({cells[index][0] for index in used})
+    c_adt = _table(c_entries, vob_count)
 
     vts = bytearray(SECTOR)
     vts[0:12] = b"DVDVIDEO-VTS"

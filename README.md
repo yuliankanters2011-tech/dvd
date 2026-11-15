@@ -217,6 +217,8 @@ Versie **1.2.3** herstelt een regressie in 1.2.2: de PGC-afspeelmodus werd op by
 
 Versie **1.2.4** herstelt de DVD-tijdsduur na de diagnose “De DVD-index bevat een ongeldige tijdsduur”. In `dvd_time_t` zijn de twee hoogste bits van het vierde byte de framerate (`01` = 25 fps, `11` = 29,97 fps) en de lage zes bits het BCD-frameaantal. De lezer telde de framerate-bits eerder mee als frames en kende `01` niet als 25 fps, waardoor geldige PAL-titels zoals de KNIGHT_RIDER-import werden geweigerd. De foutmelding bevat nu ook de gelezen tijdbytes. Werk bij naar **1.2.4** en klik **Bronnen verversen**; de bestaande import hoeft niet opnieuw gekopieerd. Kies bij voorkeur de NAS-bibliotheekbron als de live schijf I/O-fouten geeft.
 
+Versie **1.2.5** herstelt de celadrestabel (C_ADT) na de diagnose “De DVD-index mist het adres van een videocel”. Het veld `nr_of_vobs` is het aantal VOB-id's, niet het aantal 12-byte celadressen; één VOB kan veel cellen bevatten. De lezer volgt nu libdvdread en loopt door de volledige tabel op basis van `last_byte`, waardoor meerdelige afleveringen in één VTS niet meer halverwege worden geweigerd. De melding noemt nu ook de ontbrekende vob/cel-id. Werk bij naar **1.2.5** en klik **Bronnen verversen**; de bestaande import hoeft niet opnieuw gekopieerd.
+
 ## Na een NAS-herstart
 
 De dedicated shared bind-mount kan na een reboot verdwijnen. Maak in DSM een taak:
@@ -252,9 +254,10 @@ sudo docker compose logs --tail=100 dvd
 | `FFmpeg ontbreekt` | Oude image; pull/build de nieuwe image met het `ffmpeg`-pakket |
 | `ddrescue-kaartbestand bevat ongeldige getallen` | Versie 1.2.0 of ouder; update naar 1.2.1 en klik **ISO hervatten** zonder het `.partial`-bestand of de mapfile te verwijderen |
 | Conversie meldt “bestaat al” | Er staat al een MP4 of marker; kies een andere naam of verplaats beide |
-| Bron toont wel titels maar `ondersteund: 0` | Versie 1.2.1 of ouder kan gewone titels met celcommando's onterecht als shuffle weigeren; update naar 1.2.2. Versie 1.2.2 leest de PGC-modus op de verkeerde byte; update naar 1.2.3. Versie 1.2.3 kan geldige PAL-tijden afkeuren; update naar 1.2.4 |
-| Geen omzetbare bronnen, maar de import is compleet | Update naar 1.2.4 en klik **Bronnen verversen**. Lees anders de nieuwe melding onder de bronkeuze, `/api/media` (`skipped_sources`) of `docker logs dvd-bridge` voor de exacte reden |
+| Bron toont wel titels maar `ondersteund: 0` | Versie 1.2.1 of ouder kan gewone titels met celcommando's onterecht als shuffle weigeren; update naar 1.2.2. Versie 1.2.2 leest de PGC-modus op de verkeerde byte; update naar 1.2.3. Versie 1.2.3 kan geldige PAL-tijden afkeuren; update naar 1.2.4. Versie 1.2.4 kan meerdelige C_ADT-tabellen te kort uitlezen; update naar 1.2.5 |
+| Geen omzetbare bronnen, maar de import is compleet | Update naar 1.2.5 en klik **Bronnen verversen**. Lees anders de nieuwe melding onder de bronkeuze, `/api/media` (`skipped_sources`) of `docker logs dvd-bridge` voor de exacte reden |
 | `ongeldige tijdsduur` | Versie 1.2.3 of ouder telt de framerate-bits mee als frames; update naar 1.2.4. De melding bevat nu de tijdbytes |
+| `mist het adres van een videocel` | Versie 1.2.4 of ouder gebruikt `nr_of_vobs` als aantal celadressen; update naar 1.2.5. De melding bevat nu de vob/cel-id |
 | Live schijf geeft `I/O error`, NAS-kopie niet | Gebruik de NAS-bibliotheekbron. De live schijf/speler heeft leesfouten; controleer schijf, USB-kabel en voeding |
 | Conversie meldt beschadigd/beveiligd | Bron is mogelijk CSS-versleuteld, beschadigd of geen ondersteunde DVD-Video |
 | Dashboard niet bereikbaar | Container draait niet, poort is bezet, of firewall blokkeert poort 8080 |
