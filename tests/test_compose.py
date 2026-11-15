@@ -11,6 +11,8 @@ def test_compose_security_and_propagation():
     assert service.get("privileged") is not True
     assert "SYS_ADMIN" in service["cap_add"]
     assert service["devices"] == ["${DEVICE:-/dev/sr0}:/dev/sr0:r"]
+    assert service["environment"]["SLEEP_IDLE_SECONDS"] == "${SLEEP_IDLE_SECONDS:-600}"
+    assert service["environment"]["DRIVE_SPEED"] == "${DRIVE_SPEED:-0}"
     bind = next(v for v in service["volumes"] if isinstance(v, dict) and v["target"] == "/srv/dvd")
     assert bind["bind"]["propagation"] == "rshared"
     assert service["ports"] == ["${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"]
@@ -28,6 +30,8 @@ def test_compose_jellyfin_mounts_and_converter_env():
         assert env["CONVERT_PRESET"] == "${CONVERT_PRESET:-veryfast}"
         assert env["CONVERT_AUDIO_BITRATE"] == "${CONVERT_AUDIO_BITRATE:-192}"
         assert env["ISO_MAX_MISSING_PERCENT"] == "${ISO_MAX_MISSING_PERCENT:-0.5}"
+        assert env["SLEEP_IDLE_SECONDS"] == "${SLEEP_IDLE_SECONDS:-600}"
+        assert env["DRIVE_SPEED"] == "${DRIVE_SPEED:-0}"
         films = next(
             v
             for v in svc["volumes"]

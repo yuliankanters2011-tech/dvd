@@ -123,8 +123,21 @@ class Handler(BaseHTTPRequestHandler):
                 command = payload["command"]
                 if not isinstance(command, str):
                     raise TypeError
-                self.service.request(command)
-                self._json(202, {"accepted": True, "command": command})
+                if command == "speed":
+                    speed = payload["speed"]
+                    if type(speed) is not int:
+                        raise TypeError
+                    self.service.request_speed(speed)
+                    self._json(202, {"accepted": True, "command": command, "speed": speed})
+                elif command == "sleep_idle":
+                    seconds = payload["seconds"]
+                    if type(seconds) is not int:
+                        raise TypeError
+                    self.service.request_sleep_idle(seconds)
+                    self._json(202, {"accepted": True, "command": command, "seconds": seconds})
+                else:
+                    self.service.request(command)
+                    self._json(202, {"accepted": True, "command": command})
             else:
                 source_id = payload["source_id"]
                 title = payload.get("title", 0)

@@ -115,3 +115,78 @@ def test_close_tray_failure_is_actionable(monkeypatch):
     monkeypatch.setattr(drive, "run", lambda *a, **k: completed("", "failed", 1))
     with pytest.raises(drive.DriveError, match="fysieke knop"):
         drive.close_tray(Path("/dev/sr0"))
+
+
+@pytest.fixture()
+def control_ioctl(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        drive.os, "open", lambda path, flags: calls.append(("open", path, flags)) or 7
+    )
+    monkeypatch.setattr(drive.os, "close", lambda fd: calls.append(("close", fd)))
+    monkeypatch.setattr(
+        drive, "_ioctl", lambda fd, req, arg: calls.append(("ioctl", fd, req, arg)) or 0
+    )
+    return calls
+
+
+def test_spin_down_and_up_use_readonly_nonblock_ioctl(control_ioctl):
+    drive.spin_down(Path("/dev/sr0"))
+    drive.spin_up(Path("/dev/sr0"))
+    assert control_ioctl == [
+        ("open", Path("/dev/sr0"), drive.os.O_RDONLY | drive.os.O_NONBLOCK),
+        ("ioctl", 7, drive.CDROMSTOP, 0),
+        ("close", 7),
+        ("open", Path("/dev/sr0"), drive.os.O_RDONLY | drive.os.O_NONBLOCK),
+        ("ioctl", 7, drive.CDROMSTART, 0),
+        ("close", 7),
+    ]
+
+
+@pytest.mark.parametrize("speed", [0, 1, 8, 24])
+def test_set_speed_requests_linux_cdrom_units(control_ioctl, speed):
+    drive.set_speed(Path("/dev/sr0"), speed)
+    assert control_ioctl[1] == ("ioctl", 7, drive.CDROM_SELECT_SPEED, speed)
+    assert control_ioctl[-1] == ("close", 7)
+
+
+@pytest.mark.parametrize("speed", [-1, 25, True, "8", 1.5])
+def test_set_speed_rejects_invalid_values(speed):
+    with pytest.raises(ValueError):
+        drive.set_speed(Path("/dev/sr0"), speed)
+
+
+@pytest.mark.parametrize("code", [errno.ENOSYS, errno.ENOTTY, errno.EINVAL, errno.EOPNOTSUPP])
+def test_unsupported_control_is_actionable_not_fatal(monkeypatch, code):
+    monkeypatch.setattr(drive.os, "open", lambda *a: 7)
+    closed = []
+    monkeypatch.setattr(drive.os, "close", closed.append)
+
+    def deny(*a):
+        raise OSError(code, "not supported")
+
+    monkeypatch.setattr(drive, "_ioctl", deny)
+    with pytest.raises(drive.DriveUnsupportedError, match="ondersteunt"):
+        drive.spin_down(Path("/dev/sr0"))
+    assert closed == [7]
+
+
+def test_control_io_error_keeps_hardware_hint(monkeypatch):
+    monkeypatch.setattr(drive.os, "open", lambda *a: 7)
+    monkeypatch.setattr(drive.os, "close", lambda fd: None)
+
+    def deny(*a):
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(drive, "_ioctl", deny)
+    with pytest.raises(drive.DriveError, match="usb-kabel"):
+        drive.set_speed(Path("/dev/sr0"), 4)
+
+
+def test_control_open_failure_is_actionable(monkeypatch):
+    def deny(*a):
+        raise OSError(errno.ENOENT, "No such file")
+
+    monkeypatch.setattr(drive.os, "open", deny)
+    with pytest.raises(drive.DriveError, match="Kan /dev/sr0 niet openen"):
+        drive.spin_up(Path("/dev/sr0"))

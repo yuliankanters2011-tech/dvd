@@ -26,7 +26,9 @@ ENV PYTHONUNBUFFERED=1 \
     POLL_SECONDS=5 \
     WEB_PORT=8080 \
     FILMS_DIR=/volume1/video/Films \
-    MUSIC_DIR=/volume1/video/Muziek
+    MUSIC_DIR=/volume1/video/Muziek \
+    SLEEP_IDLE_SECONDS=600 \
+    DRIVE_SPEED=0
 
 EXPOSE 8080
 VOLUME ["/var/lib/dvd"]

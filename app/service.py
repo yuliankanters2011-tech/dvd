@@ -14,9 +14,10 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, convert, copy, drive, dvd, image
-from .config import Config
+from .config import Config, validate_drive_speed, validate_sleep_idle
 
 LOG = logging.getLogger("dvd.service")
+SETTINGS_FILE = "drive-settings.json"
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,11 @@ class ConvertJob:
     mode: str
     destination: str
     name: str = ""
+
+
+@dataclass(frozen=True)
+class DriveSpeedJob:
+    speed: int
 
 
 @dataclass(frozen=True)
@@ -88,6 +94,13 @@ class Snapshot:
     convert_error: str = ""
     convert_bytes: int = 0
     convert_total_bytes: int = 0
+    drive_sleeping: bool = False
+    drive_sleep_supported: bool | None = None
+    drive_speed: int = 0
+    drive_speed_max: int = drive.DRIVE_SPEED_MAX
+    drive_speed_supported: bool | None = None
+    sleep_idle_seconds: int = 0
+    drive_control_error: str = ""
     error: str = ""
     updated_at: float = field(default_factory=time.time)
 
@@ -96,7 +109,9 @@ class Service:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.stop = threading.Event()
-        self.commands: queue.Queue[str | ConvertJob | ImageJob] = queue.Queue(maxsize=8)
+        self.commands: queue.Queue[str | ConvertJob | ImageJob | DriveSpeedJob] = queue.Queue(
+            maxsize=8
+        )
         self._lock = threading.Lock()
         self._snapshot = Snapshot(
             device=str(config.device),
@@ -118,6 +133,18 @@ class Service:
         self._image_pending = False
         self._copy_pending = False
         self._job_lock = threading.Lock()
+        self._sleeping = False
+        self._sleep_supported: bool | None = None
+        self._speed_supported: bool | None = None
+        self._sleep_idle_seconds = config.sleep_idle_seconds
+        self._drive_speed = config.drive_speed
+        self._last_activity = time.monotonic()
+        self._settings_lock = threading.Lock()
+        self._load_settings()
+        self.update(
+            sleep_idle_seconds=self._sleep_idle_seconds,
+            drive_speed=self._drive_speed,
+        )
         self._worker = threading.Thread(target=self._run, name="dvd-worker", daemon=True)
 
     def snapshot(self) -> dict[str, Any]:
@@ -143,6 +170,83 @@ class Service:
             or current["image_state"] == "working"
             or current["convert_state"] == "working"
         )
+
+    def _pending_work(self) -> bool:
+        return (
+            self._conversion_pending
+            or self._image_pending
+            or self._copy_pending
+            or not self.commands.empty()
+        )
+
+    def _touch(self) -> None:
+        self._last_activity = time.monotonic()
+
+    def _settings_path(self) -> Path:
+        return self.config.state_dir / SETTINGS_FILE
+
+    def _load_settings(self) -> None:
+        try:
+            data = json.loads(self._settings_path().read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("geen object")
+            self._sleep_idle_seconds = validate_sleep_idle(data["sleep_idle_seconds"])
+            self._drive_speed = validate_drive_speed(data["drive_speed"])
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            LOG.warning("Kon spelerinstellingen niet laden (%s); gebruik omgevingswaarden", exc)
+
+    def _save_settings(self) -> None:
+        path = self._settings_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(path.name + ".tmp")
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "sleep_idle_seconds": self._sleep_idle_seconds,
+                        "drive_speed": self._drive_speed,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            os.replace(temporary, path)
+        except OSError as exc:
+            LOG.warning("Kon spelerinstellingen niet opslaan: %s", exc)
+
+    def request_sleep_idle(self, seconds: int) -> None:
+        """Update the idle timer without touching the optical device."""
+        validate_sleep_idle(seconds)
+        with self._settings_lock:
+            self._sleep_idle_seconds = seconds
+            self._save_settings()
+        self._touch()
+        self.update(sleep_idle_seconds=seconds)
+
+    def request_speed(self, speed: int) -> None:
+        validate_drive_speed(speed)
+        if self._sleeping:
+            # Remember the request, but do not open/spin the drive just to
+            # change a setting. It is applied on the next explicit wake.
+            with self._settings_lock:
+                self._drive_speed = speed
+                self._save_settings()
+            self._touch()
+            self.update(drive_speed=speed, drive_control_error="")
+            return
+        with self._job_lock:
+            if self._busy() or self._pending_work():
+                raise RuntimeError(
+                    "Wacht tot de huidige bewerking klaar is voordat je de snelheid wijzigt"
+                )
+            try:
+                self.commands.put_nowait(DriveSpeedJob(speed))
+            except queue.Full as exc:
+                raise RuntimeError("Er staan al te veel opdrachten in de wachtrij") from exc
+        self._touch()
 
     def request(self, command: str) -> None:
         if command == "cancel":
@@ -181,12 +285,21 @@ class Service:
                 self._copy_stop.set()
                 self.update(copy_cancel_requested=True)
             return
-        if command not in {"eject", "close", "copy", "iso", "iso_force", "retry"}:
+        if command not in {"eject", "close", "copy", "iso", "iso_force", "retry", "sleep", "wake"}:
             raise ValueError("Onbekende opdracht")
         with self._job_lock:
             current = self.snapshot()
             if self._conversion_pending or current["convert_state"] == "working":
                 raise RuntimeError("Wacht tot het omzetten klaar is of annuleer de conversie")
+            if command in {"sleep", "wake"} and (self._busy() or self._pending_work()):
+                raise RuntimeError(
+                    "Wacht tot de huidige bewerking klaar is voordat je de speler "
+                    "laat slapen of wakker maakt"
+                )
+            if command == "sleep" and self._sleeping:
+                raise RuntimeError("De speler slaapt al")
+            if command == "wake" and not self._sleeping:
+                raise RuntimeError("De speler is al wakker")
             if command == "iso_force":
                 if (
                     self._image_pending
@@ -198,7 +311,7 @@ class Service:
                     raise RuntimeError("Er is geen beschadigde ISO om bewust door te zetten")
                 if current["image_cancel_requested"]:
                     raise RuntimeError("De ISO-bewerking wordt al geannuleerd")
-                job: str | ConvertJob | ImageJob = ImageJob(
+                job: str | ConvertJob | ImageJob | DriveSpeedJob = ImageJob(
                     force=True, identity=self._disc.identity
                 )
                 self._image_stop.clear()
@@ -222,6 +335,7 @@ class Service:
                 self._image_pending = True
             elif job == "copy":
                 self._copy_pending = True
+        self._touch()
 
     def request_conversion(
         self, source_id: str, title: int, mode: str, destination: str, name: str = ""
@@ -247,6 +361,7 @@ class Service:
             except queue.Full as exc:
                 raise RuntimeError("Er staan al te veel opdrachten in de wachtrij") from exc
             self._conversion_pending = True
+        self._touch()
 
     def _import_label(self, folder: Path) -> str:
         try:
@@ -269,7 +384,7 @@ class Service:
                     {"location": location, "label": label, "path": str(path), "reason": reason}
                 )
 
-        if self._mounted and self._disc is not None:
+        if self._mounted and self._disc is not None and not self._sleeping:
             try:
                 source = dvd.inspect_source(self.config.mountpoint, label=self._disc.label)
                 if source.titles:
@@ -423,7 +538,10 @@ class Service:
         )
         self._mounted = True
         self._retry_at = 0
+        self._touch()
         self.update(state="ready", message="Schijf klaar: open de map op je NAS.", error="")
+        if self._drive_speed and self._speed_supported is not False:
+            self._apply_speed(self._drive_speed, announce=False)
         LOG.info(
             "Aangekoppeld: %s (%s) op %s",
             info.label,
@@ -671,9 +789,114 @@ class Service:
         if live and self.config.auto_eject:
             self._eject()
 
+    def _apply_speed(self, speed: int, *, announce: bool = True) -> bool:
+        """Best-effort hardware speed request; never fail a mount/conversion."""
+        try:
+            drive.set_speed(self.config.device, speed)
+        except drive.DriveUnsupportedError as exc:
+            self._speed_supported = False
+            self.update(drive_speed_supported=False, drive_control_error=str(exc))
+            return False
+        except drive.DriveError as exc:
+            self.update(drive_control_error=str(exc))
+            return False
+        self._speed_supported = True
+        with self._settings_lock:
+            self._drive_speed = speed
+            self._save_settings()
+        self.update(drive_speed=speed, drive_speed_supported=True, drive_control_error="")
+        if announce:
+            label = "standaard/maximum" if speed == 0 else f"{speed}x"
+            self.update(message=f"Draaisnelheid aangevraagd: {label}.")
+        return True
+
+    def _sleep(self, *, automatic: bool = False) -> None:
+        if self._busy() or self._pending_work():
+            raise RuntimeError(
+                "Wacht tot de huidige bewerking klaar is voordat je de speler laat slapen"
+            )
+        if self._sleeping:
+            return
+        if self._mounted:
+            drive.unmount(self.config.mountpoint)
+            drive.unlock_tray(self.config.device)
+            self._mounted = False
+        try:
+            drive.spin_down(self.config.device)
+        except drive.DriveUnsupportedError as exc:
+            self._sleep_supported = False
+            self._touch()
+            self._retry_at = 0
+            self.update(
+                drive_sleep_supported=False,
+                drive_control_error=str(exc),
+                state="not_ready",
+                message=str(exc),
+                error="",
+            )
+            return
+        except drive.DriveError as exc:
+            self._touch()
+            self._retry_at = 0
+            self.update(
+                drive_control_error=str(exc),
+                state="not_ready",
+                message=str(exc),
+                error="",
+            )
+            return
+        self._sleep_supported = True
+        self._sleeping = True
+        self.update(
+            drive_sleeping=True,
+            drive_sleep_supported=True,
+            drive_control_error="",
+            state="sleeping",
+            message=(
+                "Slaapstand aangevraagd: de schijf is losgekoppeld en het stopcommando "
+                "is verzonden. De usb-voeding blijft aan; sommige spelers blijven toch "
+                "draaien. Klik op Wakker worden om de speler weer te gebruiken."
+                if not automatic
+                else "Automatische slaapstand na inactiviteit. De usb-voeding blijft aan; "
+                "klik op Wakker worden om de speler weer te gebruiken."
+            ),
+            error="",
+        )
+        LOG.info("Speler%s in slaapstand gevraagd", " automatisch" if automatic else "")
+
+    def _wake(self) -> None:
+        if not self._sleeping:
+            return
+        control_error = ""
+        try:
+            drive.spin_up(self.config.device)
+            self._sleep_supported = True
+        except drive.DriveUnsupportedError as exc:
+            # Resuming normal polling/reads is itself the fallback wake path.
+            self._sleep_supported = False
+            control_error = str(exc)
+        except drive.DriveError as exc:
+            control_error = str(exc)
+        self._sleeping = False
+        self._touch()
+        self._clear_disc("not_ready", "Speler wordt wakker; de schijf wordt opnieuw gecontroleerd…")
+        self.update(drive_sleeping=False, drive_sleep_supported=self._sleep_supported)
+        if control_error:
+            self.update(drive_control_error=control_error)
+        if self._drive_speed and self._speed_supported is not False:
+            self._apply_speed(self._drive_speed, announce=False)
+
+    def _wake_for_job(self, *, mount: bool = False) -> None:
+        if not self._sleeping:
+            return
+        self._wake()
+        if mount and not self._mounted:
+            self._mount()
+
     def _eject(self) -> None:
         if self._busy():
             raise RuntimeError("Wacht tot de huidige bewerking klaar is voordat je uitwerpt")
+        self._wake_for_job()
         if self._mounted:
             drive.unmount(self.config.mountpoint)
             self._mounted = False
@@ -683,24 +906,37 @@ class Service:
     def _close(self) -> None:
         if self._busy():
             raise RuntimeError("Wacht tot de huidige bewerking klaar is voordat je de lade sluit")
+        self._wake_for_job()
         drive.close_tray(self.config.device)
         self.update(state="not_ready", message="Lade sluiten; de schijf wordt gelezen…", error="")
 
-    def _command(self, command: str | ConvertJob | ImageJob) -> None:
+    def _command(self, command: str | ConvertJob | ImageJob | DriveSpeedJob) -> None:
         try:
-            if isinstance(command, ConvertJob):
+            if isinstance(command, DriveSpeedJob):
+                self._apply_speed(command.speed)
+            elif isinstance(command, ConvertJob):
+                if command.source_id == "disc":
+                    self._wake_for_job(mount=True)
                 self._convert(command)
             elif isinstance(command, ImageJob):
+                self._wake_for_job(mount=True)
                 self._iso(command)
             elif command == "eject":
                 self._eject()
             elif command == "close":
                 self._close()
             elif command == "copy":
+                self._wake_for_job(mount=True)
                 self._copy()
             elif command == "iso":
+                self._wake_for_job(mount=True)
                 self._iso()
+            elif command == "sleep":
+                self._sleep()
+            elif command == "wake":
+                self._wake()
             elif command == "retry":
+                self._wake_for_job()
                 self._retry_at = 0
                 if not self._mounted:
                     self._mount()
@@ -776,6 +1012,23 @@ class Service:
             elif command == "copy":
                 with self._job_lock:
                     self._copy_pending = False
+            self._touch()
+
+    def _maybe_sleep(self) -> bool:
+        idle = self._sleep_idle_seconds
+        if (
+            idle <= 0
+            or self._sleeping
+            or self._sleep_supported is False
+            or self._busy()
+            or self._pending_work()
+            or self.snapshot()["state"] in {"starting", "stopped", "missing", "error"}
+        ):
+            return False
+        if time.monotonic() - self._last_activity < idle:
+            return False
+        self._sleep(automatic=True)
+        return self._sleeping
 
     def _run(self) -> None:
         cfg = self.config
@@ -815,6 +1068,14 @@ class Service:
             if command is not None:
                 self._command(command)
                 continue
+            if self._sleeping:
+                # Do not open the device, probe media, or check the mountpoint:
+                # any of those can spin a stopped drive straight back up.
+                self.stop.wait(cfg.poll_seconds)
+                continue
+            if self._maybe_sleep():
+                self.stop.wait(cfg.poll_seconds)
+                continue
             try:
                 status = drive.drive_status(cfg.device)
                 if status in {"empty", "open", "missing"}:
@@ -830,6 +1091,7 @@ class Service:
                 elif status == "not_ready":
                     self.update(state="not_ready", message="De speler komt op gang…", error="")
                 elif self._mounted and drive.media_changed(cfg.device):
+                    self._touch()
                     self._clear_disc("not_ready", "Nieuwe schijf gedetecteerd…")
                 elif (
                     not self._mounted
