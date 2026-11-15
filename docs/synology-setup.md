@@ -53,9 +53,9 @@ Open `http://<NAS-IP>:8085`. De containerpoort blijft 8080; alleen de NAS-poort 
 
 ## Updaten zonder Compose
 
-Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.5**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
+Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.6**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
 
-Versie **1.2.5** herstelt de celadrestabel: meerdelige titels in één VTS werden in 1.2.4 onterecht geweigerd met “De DVD-index mist het adres van een videocel”, omdat `nr_of_vobs` niet het aantal celadressen is. De bestaande import hoeft niet opnieuw gekopieerd. Kies na het updaten bij voorkeur de NAS-bibliotheekbron als de live schijf `I/O error` geeft. Versie **1.2.1** herstelde al het uitlezen van GNU ddrescue-kaartbestanden; verwijder bij **ISO hervatten** nooit het verborgen `.partial`-bestand of de `.mapfile`.
+Versie **1.2.6** voegt bij **Titel** de keuze “Alle ondersteunde titels in één MP4” toe. De titels worden achter elkaar in één MP4 bewaard; een extra alles-afspelen-titel die dezelfde videobestanden hergebruikt, wordt niet dubbel toegevoegd. Losse afleveringen blijven gewoon kiesbaar. De bestaande import hoeft niet opnieuw gekopieerd. Kies na het updaten bij voorkeur de NAS-bibliotheekbron als de live schijf `I/O error` geeft. Versie **1.2.5** herstelde de celadrestabel, zodat meerdelige titels in één VTS niet meer onterecht geweigerd worden. Versie **1.2.1** herstelde al het uitlezen van GNU ddrescue-kaartbestanden; verwijder bij **ISO hervatten** nooit het verborgen `.partial`-bestand of de `.mapfile`.
 
 Voer dit volledige blok uit via SSH:
 
@@ -97,7 +97,7 @@ printf '\n'
 sudo docker exec dvd-bridge python3 -c 'from app import __version__; print("DVD Bridge versie:", __version__)'
 ```
 
-Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.5` te staan.
+Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.6` te staan.
 
 ## Bestandssystemen
 
@@ -121,15 +121,15 @@ Ontbreekt `/dev/sr0`, dan is dit geen Docker-probleem dat de container kan oplos
 
 1. Plaats een onbeveiligde DVD-Video, of kopieer de schijf eerst naar `dvd/library`.
 2. Open het dashboard en kies bij **VIDEO_TS naar MP4** de bron.
-3. Kies de titel. “Langste titel” is meestal de hoofdfilm; bij een serie kies je de gewenste aflevering.
+3. Kies de titel. “Langste titel” is meestal de hoofdfilm; bij een serie kies je de gewenste aflevering. Kies “Alle ondersteunde titels in één MP4” om alle ondersteunde titels achter elkaar in één bestand te bewaren. Herhaalde videobestanden van een alles-afspelen-titel worden niet dubbel toegevoegd; niet-ondersteunde titels worden overgeslagen.
 4. Kies **Video** en bestemming **Films**, of **Alleen geluid** en bestemming **Muziek**.
 5. Vul eventueel een eigen naam in en klik **Omzetten naar MP4**.
 
-Vanaf versie **1.2.5** blijven gewone titels met celcommando's en opeenvolgende multi-PGC-titels kiesbaar, wordt de PGC-afspeelmodus op de juiste schijfbyte gelezen, worden DVD-tijden met 25 fps (`01`) of 29,97 fps (`11`) correct gedecodeerd en wordt de volledige C_ADT-celadrestabel gelezen. Alleen echte niet-sequentiële weergave (random/shuffle) krijgt de melding dat die titel niet wordt ondersteund. Een onleesbare enkele titel blokkeert andere leesbare titels niet meer. Zie je geen ondersteunde titels, klik dan **Bronnen verversen** en controleer onderaan dat de versie `v1.2.5` of nieuwer is.
+Vanaf versie **1.2.5** blijven gewone titels met celcommando's en opeenvolgende multi-PGC-titels kiesbaar, wordt de PGC-afspeelmodus op de juiste schijfbyte gelezen, worden DVD-tijden met 25 fps (`01`) of 29,97 fps (`11`) correct gedecodeerd en wordt de volledige C_ADT-celadrestabel gelezen. Alleen echte niet-sequentiële weergave (random/shuffle) krijgt de melding dat die titel niet wordt ondersteund. Een onleesbare enkele titel blokkeert andere leesbare titels niet meer. Zie je geen ondersteunde titels, klik dan **Bronnen verversen** en controleer onderaan dat de versie `v1.2.6` of nieuwer is.
 
 Als een complete import toch ontbreekt, toont het dashboard onder de bronkeuze de reden en het pad. Dezelfde informatie staat in `/api/media` onder `skipped_sources` en als waarschuwing in `sudo docker logs --tail=100 dvd-bridge`. Je hoeft niet opnieuw te kopiëren: update eerst de container en ververs de bronnen.
 
-De MP4 komt in de gekoppelde Jellyfin-map. Bestaande bestanden worden nooit overschreven. Naast de MP4 staat een `.dvd-bridge.json` marker; verplaats beide als je dezelfde naam opnieuw wilt gebruiken.
+De MP4 komt in de gekoppelde Jellyfin-map. Bestaande bestanden worden nooit overschreven. Naast de MP4 staat een `.dvd-bridge.json` marker; verplaats beide als je dezelfde naam opnieuw wilt gebruiken. Bij “Alle ondersteunde titels” krijgt de naam de toevoeging `- Alle titels` en vermeldt de marker welke titels zijn opgenomen. Tijdens het omzetten worden verborgen deelbestanden gebruikt; bij annuleren of een fout worden die en het partiële eindbestand opgeruimd.
 
 `AUDIO_TS` is bij normale dvd's leeg. Het geluid staat in `VIDEO_TS/*.VOB`; kies die bron en “Alleen geluid”. Echte DVD-Audio (AOB), audio-cd's zonder bestandssysteem en CSS-beveiligde dvd's worden niet ondersteund.
 
@@ -139,6 +139,8 @@ CLI-voorbeelden:
 sudo docker exec dvd-bridge python3 -m app.convert --source /srv/dvd/disc --list
 sudo docker exec dvd-bridge python3 -m app.convert \
   --source /srv/dvd/disc --mode video --destination films --name "Vakantie"
+sudo docker exec dvd-bridge python3 -m app.convert \
+  --source /srv/dvd/disc --title -1 --mode video --destination films --name "Hele dvd"
 ```
 
 ## Virtuele ISO-schijf in DSM

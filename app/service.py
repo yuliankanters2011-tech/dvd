@@ -83,6 +83,8 @@ class Snapshot:
     convert_source: str = ""
     convert_destination: str = ""
     convert_mode: str = ""
+    convert_title: int = 0
+    convert_titles: list[int] = field(default_factory=list)
     convert_error: str = ""
     convert_bytes: int = 0
     convert_total_bytes: int = 0
@@ -226,7 +228,7 @@ class Service:
     ) -> None:
         if not isinstance(source_id, str) or not source_id or len(source_id) > 64:
             raise ValueError("Ongeldige bron")
-        if type(title) is not int or not 0 <= title <= 99:
+        if type(title) is not int or not dvd.ALL_TITLES <= title <= 99:
             raise ValueError("Ongeldig titelnummer")
         if mode not in convert.MODES or destination not in convert.DESTINATIONS:
             raise ValueError("Ongeldige conversie")
@@ -575,6 +577,8 @@ class Service:
             convert_source=job.source_id,
             convert_destination="",
             convert_mode=job.mode,
+            convert_title=job.title,
+            convert_titles=[],
             convert_bytes=0,
             convert_total_bytes=0,
             message="Conversie wordt voorbereid…",
@@ -604,6 +608,13 @@ class Service:
                 f"De Jellyfin-map {destination} is niet gekoppeld in de container. "
                 "Voeg de volumekoppeling toe in Container Manager of compose."
             )
+        try:
+            selected = entry.source.title(job.title)
+            selected_numbers = list(selected.title_numbers or [selected.number])
+        except dvd.DvdError:
+            # Let convert_title raise the actionable error inside the normal
+            # conversion path; keep the snapshot usable for mocked sources.
+            selected_numbers = []
         self.update(
             convert_state="working",
             convert_percent=0,
@@ -614,9 +625,15 @@ class Service:
             convert_source=entry.source.label,
             convert_destination=str(destination),
             convert_mode=job.mode,
+            convert_title=job.title,
+            convert_titles=selected_numbers,
             convert_bytes=0,
             convert_total_bytes=0,
-            message="Omzetten naar MP4 voor Jellyfin…",
+            message=(
+                "Alle ondersteunde titels omzetten naar één MP4…"
+                if job.title == dvd.ALL_TITLES
+                else "Omzetten naar MP4 voor Jellyfin…"
+            ),
         )
 
         def progress(value: convert.Progress) -> None:

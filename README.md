@@ -110,7 +110,7 @@ De stationsletter/network drive is een normale SMB-mapweergave, geen USB-blokapp
 Open het dashboard en gebruik het blok **VIDEO_TS naar MP4**:
 
 1. Kies een bron: de geplaatste dvd (`Schijf`) of een eerdere import/losse videobestand uit `dvd/library` (`NAS`).
-2. Kies de titel. Standaard wordt de langste ondersteunde titel gekozen; titel 0 betekent “langste titel”.
+2. Kies de titel. Standaard wordt de langste ondersteunde titel gekozen; titel 0 betekent “langste titel”. Kies “Alle ondersteunde titels in één MP4” (titel -1) om alle ondersteunde titels achter elkaar in één bestand te bewaren. Een extra alles-afspelen-titel die dezelfde videobestanden hergebruikt, wordt niet dubbel toegevoegd; niet-ondersteunde titels worden overgeslagen.
 3. Kies **Video** voor een film in `Films`, of **Alleen geluid** voor een AAC-MP4 in `Muziek`.
 4. Kies de bestemming en eventueel een eigen bestandsnaam.
 5. Klik **Omzetten naar MP4**. Laat de NAS en de usb-speler aangesloten tot de conversie klaar is.
@@ -130,6 +130,8 @@ CLI in de container:
 sudo docker compose exec dvd python3 -m app.convert --source /srv/dvd/disc --list
 sudo docker compose exec dvd python3 -m app.convert \
   --source /srv/dvd/disc --title 0 --mode video --destination films --name "Mijn film"
+sudo docker compose exec dvd python3 -m app.convert \
+  --source /srv/dvd/disc --title -1 --mode video --destination films --name "Hele dvd"
 sudo docker compose exec dvd python3 -m app.convert \
   --source /srv/dvd/library/IMPORT/VIDEO_TS --mode audio --destination music
 ```
@@ -219,6 +221,8 @@ Versie **1.2.4** herstelt de DVD-tijdsduur na de diagnose “De DVD-index bevat 
 
 Versie **1.2.5** herstelt de celadrestabel (C_ADT) na de diagnose “De DVD-index mist het adres van een videocel”. Het veld `nr_of_vobs` is het aantal VOB-id's, niet het aantal 12-byte celadressen; één VOB kan veel cellen bevatten. De lezer volgt nu libdvdread en loopt door de volledige tabel op basis van `last_byte`, waardoor meerdelige afleveringen in één VTS niet meer halverwege worden geweigerd. De melding noemt nu ook de ontbrekende vob/cel-id. Werk bij naar **1.2.5** en klik **Bronnen verversen**; de bestaande import hoeft niet opnieuw gekopieerd.
 
+Versie **1.2.6** voegt de keuze “Alle ondersteunde titels in één MP4” toe bij **Titel**. De converter zet de ondersteunde titels achter elkaar in één MP4 en herkent een alles-afspelen-titel die dezelfde VOB-cellen hergebruikt, zodat afleveringen niet dubbel worden opgeslagen. Losse afleveringen, video/audio-modi, Films/Muziek, voortgang, annuleren en niet-overschrijven blijven werken. De marker vermeldt de opgenomen titelnummers. Werk bij naar **1.2.6** en klik **Bronnen verversen**; de bestaande import hoeft niet opnieuw gekopieerd.
+
 ## Na een NAS-herstart
 
 De dedicated shared bind-mount kan na een reboot verdwijnen. Maak in DSM een taak:
@@ -255,7 +259,7 @@ sudo docker compose logs --tail=100 dvd
 | `ddrescue-kaartbestand bevat ongeldige getallen` | Versie 1.2.0 of ouder; update naar 1.2.1 en klik **ISO hervatten** zonder het `.partial`-bestand of de mapfile te verwijderen |
 | Conversie meldt “bestaat al” | Er staat al een MP4 of marker; kies een andere naam of verplaats beide |
 | Bron toont wel titels maar `ondersteund: 0` | Versie 1.2.1 of ouder kan gewone titels met celcommando's onterecht als shuffle weigeren; update naar 1.2.2. Versie 1.2.2 leest de PGC-modus op de verkeerde byte; update naar 1.2.3. Versie 1.2.3 kan geldige PAL-tijden afkeuren; update naar 1.2.4. Versie 1.2.4 kan meerdelige C_ADT-tabellen te kort uitlezen; update naar 1.2.5 |
-| Geen omzetbare bronnen, maar de import is compleet | Update naar 1.2.5 en klik **Bronnen verversen**. Lees anders de nieuwe melding onder de bronkeuze, `/api/media` (`skipped_sources`) of `docker logs dvd-bridge` voor de exacte reden |
+| Geen omzetbare bronnen, maar de import is compleet | Update naar 1.2.6 en klik **Bronnen verversen**. Lees anders de nieuwe melding onder de bronkeuze, `/api/media` (`skipped_sources`) of `docker logs dvd-bridge` voor de exacte reden |
 | `ongeldige tijdsduur` | Versie 1.2.3 of ouder telt de framerate-bits mee als frames; update naar 1.2.4. De melding bevat nu de tijdbytes |
 | `mist het adres van een videocel` | Versie 1.2.4 of ouder gebruikt `nr_of_vobs` als aantal celadressen; update naar 1.2.5. De melding bevat nu de vob/cel-id |
 | Live schijf geeft `I/O error`, NAS-kopie niet | Gebruik de NAS-bibliotheekbron. De live schijf/speler heeft leesfouten; controleer schijf, USB-kabel en voeding |

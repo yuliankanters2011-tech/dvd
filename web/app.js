@@ -84,6 +84,14 @@ function renderTitles() {
   if (supported.length > 1) {
     select.append(option("0", "Langste titel (aanbevolen)"));
   }
+  const all = source.all_titles;
+  if (supported.length > 1 && all?.supported) {
+    const count = all.title_numbers?.length ?? supported.length;
+    select.append(option(
+      "-1",
+      `Alle ondersteunde titels in één MP4 · ${duration(all.duration_seconds)} · ${count} titels`,
+    ));
+  }
   for (const title of source.titles) {
     select.append(option(
       String(title.number),
@@ -143,12 +151,20 @@ function renderMedia(data) {
   updateDestination();
 }
 
+function selectedTitle(source) {
+  const value = Number($("convert-title").value);
+  if (value === -1) return source?.all_titles;
+  return source?.titles.find((item) => item.number === value);
+}
+
 function renderConvert(data) {
   const converting = data.convert_state === "working";
   const source = currentSource();
-  const title = source?.titles.find((item) => item.number === Number($("convert-title").value));
+  const title = selectedTitle(source);
+  const allSelected = Number($("convert-title").value) === -1;
   $("convert-button").disabled = busy || converting || data.copy_state === "copying"
     || data.image_state === "working" || !title?.supported;
+  $("convert-button").textContent = allSelected ? "Alles in één MP4" : "Omzetten naar MP4";
   $("cancel-convert").classList.toggle("hidden", !converting);
   $("cancel-convert").disabled = busy;
   $("convert-progress").classList.toggle("hidden", !["working", "done", "error"].includes(data.convert_state));
@@ -164,12 +180,16 @@ function renderConvert(data) {
     feedback.textContent = data.convert_file ? `Klaar: ${data.convert_file}` : "MP4 klaar voor Jellyfin.";
     $("convert-label").textContent = "MP4 klaar";
   } else {
-    $("convert-label").textContent = converting ? "Omzetten naar MP4…" : "Omzetten";
+    $("convert-label").textContent = converting
+      ? (data.convert_title === -1 ? "Alle titels omzetten naar één MP4…" : "Omzetten naar MP4…")
+      : "Omzetten";
   }
   const speed = data.convert_speed > 0 ? `${data.convert_speed.toFixed(2)}×` : "snelheid bepalen…";
   const eta = Number.isFinite(data.convert_eta) && data.convert_eta > 0 ? ` · nog ~${duration(data.convert_eta)}` : "";
   const read = data.convert_bytes > 0 ? ` · ${bytes(data.convert_bytes)} gelezen` : "";
-  $("convert-meta").textContent = converting ? `${speed}${eta}${read}` : data.convert_file || "";
+  const titles = data.convert_title === -1 && data.convert_titles?.length
+    ? ` · ${data.convert_titles.length} titels` : "";
+  $("convert-meta").textContent = converting ? `${speed}${eta}${read}${titles}` : data.convert_file || "";
 }
 
 function render(data) {

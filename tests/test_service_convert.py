@@ -260,3 +260,43 @@ def test_shutdown_sets_conversion_stop(svc, monkeypatch):
     svc.shutdown()
     assert svc.stop.is_set()
     assert svc._convert_stop.is_set()
+
+
+def test_request_conversion_accepts_all_titles_sentinel(svc):
+    svc.request_conversion("disc", convert.dvd.ALL_TITLES, "video", "films")
+    assert svc.commands.get_nowait().title == convert.dvd.ALL_TITLES
+    for title in (-2, 100, True, "1"):
+        with pytest.raises(ValueError):
+            svc.request_conversion("disc", title, "video", "films")
+
+
+def test_all_titles_snapshot_lists_kept_titles_and_message(svc, monkeypatch):
+    path = Path("/tmp/VTS_01_1.VOB")
+    source = dvd.Source(
+        path,
+        "serie",
+        "dvd",
+        (
+            dvd.Title(1, 2, 1, (dvd.Segment(path, 0, 2048),)),
+            dvd.Title(2, 3, 1, (dvd.Segment(path, 2048, 2048),)),
+        ),
+    )
+    monkeypatch.setattr(
+        svc, "_collect_sources", lambda: [service.SourceEntry("x", "bibliotheek", source)]
+    )
+    seen = {}
+
+    def fake_convert(src, title, mode, destination, state, settings, stop, progress, **kwargs):
+        seen["title"] = title
+        progress(convert.Progress(42, 2, 2.0, 3, 100, 200))
+        return convert.Result(destination / "serie - Alle titels.mp4", 123, 5.0, mode)
+
+    monkeypatch.setattr(convert, "convert_title", fake_convert)
+    svc.request_conversion("x", dvd.ALL_TITLES, "video", "films")
+    svc._command(svc.commands.get_nowait())
+    snapshot = svc.snapshot()
+    assert seen["title"] == dvd.ALL_TITLES
+    assert snapshot["convert_state"] == "done"
+    assert snapshot["convert_title"] == dvd.ALL_TITLES
+    assert snapshot["convert_titles"] == [1, 2]
+    assert snapshot["convert_file"].endswith("serie - Alle titels.mp4")
