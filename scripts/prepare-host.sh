@@ -9,6 +9,8 @@ WEB_PORT=${WEB_PORT:-8080}
 COPY_FILES=${COPY_FILES:-false}
 AUTO_EJECT=${AUTO_EJECT:-false}
 ISO_MAX_MISSING_PERCENT=${ISO_MAX_MISSING_PERCENT:-0.5}
+SLEEP_IDLE_SECONDS=${SLEEP_IDLE_SECONDS:-600}
+DRIVE_SPEED=${DRIVE_SPEED:-0}
 MEDIA_ROOT=${MEDIA_ROOT:-/volume1/video}
 WRITE_ENV=1
 
@@ -22,6 +24,8 @@ Gebruik: sudo bash scripts/prepare-host.sh [opties]
   --copy            Kopieer nieuwe schijven automatisch naar library
   --auto-eject      Werp uit na een geslaagde automatische kopie of live-dvd-conversie
   --media-root PAD  Jellyfin-map (standaard /volume1/video; maakt Films/Muziek)
+  --sleep-idle SEC  Automatische slaapstand: 0 = uit, anders 60-86400 (standaard 600)
+  --drive-speed N   Draaisnelheid aanvragen: 0 = standaard/max, 1-24 (standaard 0)
   --no-env          Schrijf geen .env-bestand
   -h, --help        Toon deze hulp
 
@@ -38,6 +42,8 @@ while [[ $# -gt 0 ]]; do
         --copy) COPY_FILES=true; shift ;;
         --auto-eject) AUTO_EJECT=true; shift ;;
         --media-root) MEDIA_ROOT=${2:?Ontbrekend pad}; shift 2 ;;
+        --sleep-idle) SLEEP_IDLE_SECONDS=${2:?Ontbrekende slaap-timer}; shift 2 ;;
+        --drive-speed) DRIVE_SPEED=${2:?Ontbrekende draaisnelheid}; shift 2 ;;
         --no-env) WRITE_ENV=0; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Onbekende optie: $1" >&2; usage >&2; exit 2 ;;
@@ -63,6 +69,12 @@ if ! [[ $ISO_MAX_MISSING_PERCENT =~ ^[0-9]+([.][0-9]+)?$ ]]; then
 fi
 if ! awk -v n="$ISO_MAX_MISSING_PERCENT" 'BEGIN { exit !(n >= 0 && n <= 100) }'; then
     fail "ISO_MAX_MISSING_PERCENT moet een getal van 0 t/m 100 zijn"
+fi
+if ! [[ $SLEEP_IDLE_SECONDS =~ ^[0-9]+$ ]] || (( SLEEP_IDLE_SECONDS != 0 && (SLEEP_IDLE_SECONDS < 60 || SLEEP_IDLE_SECONDS > 86400) )); then
+    fail "SLEEP_IDLE_SECONDS moet 0 (uit) of 60 t/m 86400 zijn"
+fi
+if ! [[ $DRIVE_SPEED =~ ^[0-9]+$ ]] || (( DRIVE_SPEED > 24 )); then
+    fail "DRIVE_SPEED moet 0 t/m 24 zijn"
 fi
 
 command -v docker >/dev/null || fail "Docker/Container Manager is niet geïnstalleerd"
@@ -160,6 +172,8 @@ CONVERT_THREADS=2
 CONVERT_CRF=20
 CONVERT_PRESET=veryfast
 CONVERT_AUDIO_BITRATE=192
+SLEEP_IDLE_SECONDS=$SLEEP_IDLE_SECONDS
+DRIVE_SPEED=$DRIVE_SPEED
 EOF
     chown "$PUID:$PGID" "$ENV_FILE"
     chmod 0644 "$ENV_FILE"

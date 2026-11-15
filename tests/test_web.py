@@ -214,3 +214,86 @@ def test_convert_endpoint_rejects_invalid_title_numbers(server, title):
     with pytest.raises(urllib.error.HTTPError) as exc:
         post_json(httpd, "/api/convert", {"source_id": "abc", "title": title})
     assert exc.value.code == 400
+
+
+def test_sleep_and_wake_commands(server):
+    httpd, service = server
+    with post_json(httpd, "/api/command", {"command": "sleep"}) as response:
+        assert response.status == 202
+    assert service.commands.get_nowait() == "sleep"
+    service._sleeping = True
+    service.update(drive_sleeping=True, state="sleeping")
+    with post_json(httpd, "/api/command", {"command": "wake"}) as response:
+        assert response.status == 202
+    assert service.commands.get_nowait() == "wake"
+
+
+def test_speed_command_queues_numeric_job(server):
+    httpd, service = server
+    with post_json(httpd, "/api/command", {"command": "speed", "speed": 8}) as response:
+        assert response.status == 202
+        assert json.load(response)["speed"] == 8
+    job = service.commands.get_nowait()
+    assert job.speed == 8
+
+
+@pytest.mark.parametrize("speed", [-1, 25, True, "8", 1.5, None])
+def test_speed_command_rejects_invalid_numbers(server, speed):
+    httpd, _ = server
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/command", {"command": "speed", "speed": speed})
+    assert exc.value.code == 400
+
+
+def test_speed_command_requires_number(server):
+    httpd, _ = server
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/command", {"command": "speed"})
+    assert exc.value.code == 400
+
+
+def test_sleep_idle_command_updates_snapshot(server):
+    httpd, service = server
+    with post_json(httpd, "/api/command", {"command": "sleep_idle", "seconds": 300}) as response:
+        assert response.status == 202
+    assert service.snapshot()["sleep_idle_seconds"] == 300
+    with post_json(httpd, "/api/command", {"command": "sleep_idle", "seconds": 0}) as response:
+        assert response.status == 202
+    assert service.snapshot()["sleep_idle_seconds"] == 0
+
+
+@pytest.mark.parametrize("seconds", [30, -1, 86401, True, "300", 1.5, None])
+def test_sleep_idle_command_rejects_invalid_numbers(server, seconds):
+    httpd, _ = server
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/command", {"command": "sleep_idle", "seconds": seconds})
+    assert exc.value.code == 400
+
+
+def test_drive_commands_require_csrf(server):
+    httpd, _ = server
+    for payload in (
+        {"command": "sleep"},
+        {"command": "speed", "speed": 4},
+        {"command": "sleep_idle", "seconds": 60},
+    ):
+        request = urllib.request.Request(
+            url(httpd, "/api/command"),
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(request)
+        assert exc.value.code == 403
+
+
+def test_sleep_blocked_while_converting(server):
+    httpd, service = server
+    service.update(convert_state="working")
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/command", {"command": "sleep"})
+    assert exc.value.code == 409
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        post_json(httpd, "/api/command", {"command": "speed", "speed": 4})
+    assert exc.value.code == 409

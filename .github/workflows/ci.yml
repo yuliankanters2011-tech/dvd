@@ -47,6 +47,8 @@ jobs:
           curl --fail --silent http://127.0.0.1:18080/healthz
           curl --fail --silent http://127.0.0.1:18080/api/status
           curl --fail --silent http://127.0.0.1:18080/api/media
+          curl --fail --silent http://127.0.0.1:18080/api/status | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["drive_sleeping"] is False and d["sleep_idle_seconds"] == 600 and d["drive_speed"] == 0 and d["drive_speed_max"] == 24'
+          curl --fail --silent http://127.0.0.1:18080/ | grep -q 'id="drive-speed"'
           docker exec dvd-smoke ffmpeg -version
           docker exec dvd-smoke ffprobe -version
           docker exec dvd-smoke ddrescue --version

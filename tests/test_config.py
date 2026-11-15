@@ -131,6 +131,45 @@ def test_iso_tolerance_invalid(monkeypatch, value):
         Config.from_env()
 
 
+def test_drive_control_defaults(monkeypatch):
+    monkeypatch.delenv("SLEEP_IDLE_SECONDS", raising=False)
+    monkeypatch.delenv("DRIVE_SPEED", raising=False)
+    cfg = Config.from_env()
+    assert cfg.sleep_idle_seconds == 600
+    assert cfg.drive_speed == 0
+
+
+def test_drive_control_env(monkeypatch):
+    monkeypatch.setenv("SLEEP_IDLE_SECONDS", "0")
+    monkeypatch.setenv("DRIVE_SPEED", "8")
+    cfg = Config.from_env()
+    assert cfg.sleep_idle_seconds == 0
+    assert cfg.drive_speed == 8
+    monkeypatch.setenv("SLEEP_IDLE_SECONDS", "86400")
+    monkeypatch.setenv("DRIVE_SPEED", "24")
+    cfg = Config.from_env()
+    assert cfg.sleep_idle_seconds == 86400
+    assert cfg.drive_speed == 24
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("SLEEP_IDLE_SECONDS", "30"),
+        ("SLEEP_IDLE_SECONDS", "-1"),
+        ("SLEEP_IDLE_SECONDS", "86401"),
+        ("SLEEP_IDLE_SECONDS", "abc"),
+        ("DRIVE_SPEED", "-1"),
+        ("DRIVE_SPEED", "25"),
+        ("DRIVE_SPEED", "1.5"),
+    ],
+)
+def test_drive_control_invalid(monkeypatch, key, value):
+    monkeypatch.setenv(key, value)
+    with pytest.raises(ConfigError):
+        Config.from_env()
+
+
 def test_media_dirs_must_be_distinct_and_not_nested(monkeypatch, tmp_path):
     monkeypatch.setenv("FILMS_DIR", str(tmp_path / "media"))
     monkeypatch.setenv("MUSIC_DIR", str(tmp_path / "media"))

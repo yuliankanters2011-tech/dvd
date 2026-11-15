@@ -8,6 +8,12 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .drive import DRIVE_SPEED_MAX
+
+SLEEP_IDLE_MIN = 60
+SLEEP_IDLE_MAX = 86400
+SLEEP_IDLE_DEFAULT = 600
+
 
 class ConfigError(ValueError):
     pass
@@ -42,6 +48,26 @@ def percentage(name: str, default: float, minimum: float = 0, maximum: float = 1
     return value
 
 
+def validate_sleep_idle(seconds: int) -> int:
+    if type(seconds) is not int or not (
+        seconds == 0 or SLEEP_IDLE_MIN <= seconds <= SLEEP_IDLE_MAX
+    ):
+        raise ConfigError(
+            f"SLEEP_IDLE_SECONDS moet 0 (uit) of {SLEEP_IDLE_MIN} t/m "
+            f"{SLEEP_IDLE_MAX} seconden zijn"
+        )
+    return seconds
+
+
+def validate_drive_speed(speed: int) -> int:
+    if type(speed) is not int or not 0 <= speed <= DRIVE_SPEED_MAX:
+        raise ConfigError(
+            f"DRIVE_SPEED moet een geheel getal van 0 t/m {DRIVE_SPEED_MAX} zijn; "
+            "0 betekent de standaard/maximumsnelheid van de speler"
+        )
+    return speed
+
+
 @dataclass(frozen=True)
 class Config:
     device: Path = Path("/dev/sr0")
@@ -60,6 +86,8 @@ class Config:
     convert_crf: int = 20
     convert_preset: str = "veryfast"
     convert_audio_bitrate: int = 192
+    sleep_idle_seconds: int = SLEEP_IDLE_DEFAULT
+    drive_speed: int = 0
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
 
@@ -116,6 +144,10 @@ class Config:
             convert_crf=integer("CONVERT_CRF", 20, 1, 51),
             convert_preset=preset,
             convert_audio_bitrate=integer("CONVERT_AUDIO_BITRATE", 192, 64, 512),
+            sleep_idle_seconds=validate_sleep_idle(
+                integer("SLEEP_IDLE_SECONDS", SLEEP_IDLE_DEFAULT, 0, SLEEP_IDLE_MAX)
+            ),
+            drive_speed=validate_drive_speed(integer("DRIVE_SPEED", 0, 0, DRIVE_SPEED_MAX)),
             ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg").strip() or "ffmpeg",
             ffprobe_bin=os.environ.get("FFPROBE_BIN", "ffprobe").strip() or "ffprobe",
         )

@@ -18,8 +18,15 @@ CDROM_DRIVE_STATUS = 0x5326
 CDROM_MEDIA_CHANGED = 0x5325
 CDROM_LOCKDOOR = 0x5329
 CDROMCLOSETRAY = 0x5319
+CDROMSTOP = 0x5307
+CDROMSTART = 0x5308
+CDROM_SELECT_SPEED = 0x5322
 CDSL_CURRENT = 0x7FFFFFFF
 CDS_DISC_OK = 4
+# Linux cdrom ioctl speed units. The sr driver multiplies a non-zero value
+# by 177 kB/s; 0 asks the drive for its default/maximum. This is a request,
+# not a measured RPM and not a guaranteed DVD-video read rate.
+DRIVE_SPEED_MAX = 24
 
 DRIVE_STATES = {
     0: "unknown",
@@ -32,6 +39,10 @@ DRIVE_STATES = {
 
 class DriveError(RuntimeError):
     """An actionable, Dutch error message for the dashboard."""
+
+
+class DriveUnsupportedError(DriveError):
+    """The drive or USB bridge does not implement this control ioctl."""
 
 
 @dataclass(frozen=True)
@@ -269,6 +280,50 @@ def close_tray(device: Path) -> None:
             ) from None
     finally:
         os.close(fd)
+
+
+def _control_ioctl(device: Path, request: int, argument: int, action: str) -> None:
+    """Run a read-safe cdrom control ioctl and close the fd immediately.
+
+    Keeping an fd open would itself count as drive activity. CDROMSTART/STOP
+    and CDROM_SELECT_SPEED are dispatched by the kernel's cdrom layer before
+    the raw-SCSI write-permission check, so the existing :r device is enough.
+    """
+    try:
+        fd = os.open(device, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError as exc:
+        raise DriveError(f"Kan {device} niet openen om {action}: {exc.strerror}") from exc
+    try:
+        _ioctl(fd, request, argument)
+    except OSError as exc:
+        if exc.errno in {errno.ENOSYS, errno.ENOTTY, errno.EINVAL, errno.EOPNOTSUPP}:
+            raise DriveUnsupportedError(
+                f"Deze speler of usb-brug ondersteunt {action} niet. "
+                "Het dashboard blijft verder gewoon werken."
+            ) from exc
+        raise DriveError(
+            f"Kan {action} niet uitvoeren op {device}: {exc.strerror}. "
+            "Controleer de schijf, usb-kabel en voeding."
+        ) from exc
+    finally:
+        os.close(fd)
+
+
+def spin_down(device: Path) -> None:
+    """Ask the drive to stop spinning. This does not cut USB bus power."""
+    _control_ioctl(device, CDROMSTOP, 0, "de speler te laten slapen")
+
+
+def spin_up(device: Path) -> None:
+    """Ask the drive to start again; some drives also close the tray."""
+    _control_ioctl(device, CDROMSTART, 0, "de speler wakker te maken")
+
+
+def set_speed(device: Path, speed: int) -> None:
+    """Request a read-speed limit in Linux cdrom speed units (0 = default/max)."""
+    if type(speed) is not int or not 0 <= speed <= DRIVE_SPEED_MAX:
+        raise ValueError(f"Draaisnelheid moet 0 t/m {DRIVE_SPEED_MAX} zijn")
+    _control_ioctl(device, CDROM_SELECT_SPEED, speed, "de draaisnelheid te wijzigen")
 
 
 def check_tools() -> None:

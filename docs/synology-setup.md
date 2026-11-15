@@ -34,6 +34,7 @@ sudo docker run -d --name dvd-bridge --restart unless-stopped --init \
   -e FILMS_DIR=/volume1/video/Films -e MUSIC_DIR=/volume1/video/Muziek \
   -e CONVERT_THREADS=2 -e CONVERT_CRF=20 -e CONVERT_PRESET=veryfast \
   -e CONVERT_AUDIO_BITRATE=192 \
+  -e SLEEP_IDLE_SECONDS=600 -e DRIVE_SPEED=0 \
   --mount type=bind,source=/volume1/dvd,target=/srv/dvd,bind-propagation=rshared \
   --mount type=volume,source=dvd-state,target=/var/lib/dvd \
   --mount type=bind,source=/volume1/video/Films,target=/volume1/video/Films \
@@ -53,7 +54,9 @@ Open `http://<NAS-IP>:8085`. De containerpoort blijft 8080; alleen de NAS-poort 
 
 ## Updaten zonder Compose
 
-Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.6**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
+Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.7**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
+
+Versie **1.2.7** voegt **Slaapstand & draaisnelheid** toe: een handmatige slaap/wakker-knop, een instelbare automatische slaaptimer en een slider om de draaisnelheid van de usb-speler aan te vragen. Tijdens slaapstand pauzeert DVD Bridge de spelercontroles; de usb-voeding blijft aan en het stopcommando is best-effort. De bestaande import, ISO's en markers blijven ongewijzigd.
 
 Versie **1.2.6** voegt bij **Titel** de keuze “Alle ondersteunde titels in één MP4” toe. De titels worden achter elkaar in één MP4 bewaard; een extra alles-afspelen-titel die dezelfde videobestanden hergebruikt, wordt niet dubbel toegevoegd. Losse afleveringen blijven gewoon kiesbaar. De bestaande import hoeft niet opnieuw gekopieerd. Kies na het updaten bij voorkeur de NAS-bibliotheekbron als de live schijf `I/O error` geeft. Versie **1.2.5** herstelde de celadrestabel, zodat meerdelige titels in één VTS niet meer onterecht geweigerd worden. Versie **1.2.1** herstelde al het uitlezen van GNU ddrescue-kaartbestanden; verwijder bij **ISO hervatten** nooit het verborgen `.partial`-bestand of de `.mapfile`.
 
@@ -80,6 +83,7 @@ sudo docker run -d --name dvd-bridge --restart unless-stopped --init \
   -e FILMS_DIR=/volume1/video/Films -e MUSIC_DIR=/volume1/video/Muziek \
   -e CONVERT_THREADS=2 -e CONVERT_CRF=20 -e CONVERT_PRESET=veryfast \
   -e CONVERT_AUDIO_BITRATE=192 \
+  -e SLEEP_IDLE_SECONDS=600 -e DRIVE_SPEED=0 \
   --mount type=bind,source=/volume1/dvd,target=/srv/dvd,bind-propagation=rshared \
   --mount type=volume,source=dvd-state,target=/var/lib/dvd \
   --mount type=bind,source=/volume1/video/Films,target=/volume1/video/Films \
@@ -97,7 +101,7 @@ printf '\n'
 sudo docker exec dvd-bridge python3 -c 'from app import __version__; print("DVD Bridge versie:", __version__)'
 ```
 
-Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.6` te staan.
+Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.7` te staan.
 
 ## Bestandssystemen
 
@@ -110,6 +114,18 @@ lsmod | grep -E 'cdrom|sr_mod|udf|isofs|nls_utf8'
 ```
 
 Ontbreekt `/dev/sr0`, dan is dit geen Docker-probleem dat de container kan oplossen. Sommige Synology-modellen missen de optische drivers. Gebruik dan een ondersteunde NAS/Linux-host of een speler die door DSM zelf wordt herkend. Compileer geen willekeurige kernelmodules voor een ander DSM-model.
+
+## Slaapstand en draaisnelheid
+
+Het dashboardblok **Slaapstand & draaisnelheid** werkt vanaf **1.2.7**:
+
+- **Slaapstand** koppelt de schijf los en stuurt een stopcommando naar de usb-speler. De usb-voeding blijft aan; sommige spelers blijven toch draaien. Dit is geen echte power-off en geen NAS/container-shutdown.
+- **Automatisch slapen** staat standaard op 10 minuten zonder opdracht/activiteit. Kies een andere tijd of **Uit** in het dashboard, of zet `-e SLEEP_IDLE_SECONDS=0` bij `docker run`. De dashboardkeuze wordt bewaard in `dvd-state/drive-settings.json`.
+- Tijdens slaapstand controleert DVD Bridge de speler niet meer, zodat hij niet meteen weer opstart. Klik **Wakker worden**, uitwerpen, lade sluiten of start een opdracht op de live schijf om verder te gaan. Een conversie uit de NAS-bibliotheek hoeft de speler niet wakker te maken.
+- De **slider** vraagt een draaisnelheid aan: 0 = standaard/maximum, 1–24 Linux cdrom-eenheden. Het echte toerental is afhankelijk van de speler/usb-brug; niet elke speler ondersteunt dit. Dit verandert niet de MP4-conversiesnelheid.
+- Tijdens kopiëren, ISO-maken of omzetten zijn slaapstand en snelheidswijzigingen geblokkeerd. Annuleer eerst als je de speler wilt laten slapen.
+
+De device-toegang blijft `/dev/sr0:r`; er is geen privileged mode of host-USB-toegang nodig.
 
 ## Lade sluiten en uitwerpen
 
@@ -125,7 +141,7 @@ Ontbreekt `/dev/sr0`, dan is dit geen Docker-probleem dat de container kan oplos
 4. Kies **Video** en bestemming **Films**, of **Alleen geluid** en bestemming **Muziek**.
 5. Vul eventueel een eigen naam in en klik **Omzetten naar MP4**.
 
-Vanaf versie **1.2.5** blijven gewone titels met celcommando's en opeenvolgende multi-PGC-titels kiesbaar, wordt de PGC-afspeelmodus op de juiste schijfbyte gelezen, worden DVD-tijden met 25 fps (`01`) of 29,97 fps (`11`) correct gedecodeerd en wordt de volledige C_ADT-celadrestabel gelezen. Alleen echte niet-sequentiële weergave (random/shuffle) krijgt de melding dat die titel niet wordt ondersteund. Een onleesbare enkele titel blokkeert andere leesbare titels niet meer. Zie je geen ondersteunde titels, klik dan **Bronnen verversen** en controleer onderaan dat de versie `v1.2.6` of nieuwer is.
+Vanaf versie **1.2.5** blijven gewone titels met celcommando's en opeenvolgende multi-PGC-titels kiesbaar, wordt de PGC-afspeelmodus op de juiste schijfbyte gelezen, worden DVD-tijden met 25 fps (`01`) of 29,97 fps (`11`) correct gedecodeerd en wordt de volledige C_ADT-celadrestabel gelezen. Alleen echte niet-sequentiële weergave (random/shuffle) krijgt de melding dat die titel niet wordt ondersteund. Een onleesbare enkele titel blokkeert andere leesbare titels niet meer. Zie je geen ondersteunde titels, klik dan **Bronnen verversen** en controleer onderaan dat de versie `v1.2.7` of nieuwer is.
 
 Als een complete import toch ontbreekt, toont het dashboard onder de bronkeuze de reden en het pad. Dezelfde informatie staat in `/api/media` onder `skipped_sources` en als waarschuwing in `sudo docker logs --tail=100 dvd-bridge`. Je hoeft niet opnieuw te kopiëren: update eerst de container en ververs de bronnen.
 

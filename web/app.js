@@ -10,6 +10,7 @@ const stateLabels = {
   not_ready: ["Even wachten", "working"],
   mounting: ["Aankoppelen", "working"],
   error: ["Controle nodig", "error"],
+  sleeping: ["Slaapstand", "sleeping"],
   stopped: ["Gestopt", ""],
 };
 const titleLabels = {
@@ -20,6 +21,7 @@ const titleLabels = {
   not_ready: "De speler komt op gang",
   mounting: "De schijf wordt aangekoppeld",
   error: "Er is een probleem",
+  sleeping: "De speler slaapt",
   stopped: "De service is gestopt",
   starting: "De speler wordt gecontroleerd",
 };
@@ -28,6 +30,9 @@ let latest = null;
 let media = { sources: [], skipped_sources: [], destinations: {} };
 let selectedSourceId = "";
 let sourceLoading = false;
+let speedChanging = false;
+let speedDirty = false;
+let idleChanging = false;
 
 function bytes(value) {
   if (!Number.isFinite(value) || value <= 0) return "—";
@@ -157,6 +162,42 @@ function selectedTitle(source) {
   return source?.titles.find((item) => item.number === value);
 }
 
+function speedLabel(value) {
+  return value === 0 ? "Standaard / maximum" : `${value}× aanvragen`;
+}
+
+function renderDrive(data) {
+  const working = data.copy_state === "copying" || data.image_state === "working"
+    || data.convert_state === "working";
+  const sleeping = Boolean(data.drive_sleeping);
+  const badge = $("drive-badge");
+  badge.textContent = sleeping ? "Slaapt" : "Wakker";
+  badge.className = `badge ${sleeping ? "sleeping" : "ready"}`;
+  const sleepButton = $("sleep-button");
+  sleepButton.textContent = sleeping ? "Wakker worden" : "Slaapstand";
+  sleepButton.disabled = busy || working || data.state === "starting" || data.state === "stopped"
+    || (!sleeping && data.drive_sleep_supported === false);
+  const idle = $("sleep-idle");
+  idle.disabled = busy || idleChanging;
+  if (!idleChanging) idle.value = String(data.sleep_idle_seconds ?? 0);
+  const slider = $("drive-speed");
+  slider.max = String(data.drive_speed_max ?? 24);
+  slider.disabled = busy || working || speedChanging || sleeping
+    || data.drive_speed_supported === false || data.state === "starting" || data.state === "stopped";
+  if (!speedChanging && !speedDirty) slider.value = String(data.drive_speed ?? 0);
+  $("drive-speed-label").textContent = speedLabel(Number(slider.value));
+  const feedback = $("drive-feedback");
+  if (data.drive_control_error) {
+    feedback.className = "action-feedback warning";
+    feedback.textContent = data.drive_control_error;
+  } else if (!busy && !speedChanging && !idleChanging) {
+    feedback.className = "action-feedback";
+    feedback.textContent = sleeping
+      ? "Slaapstand actief. De usb-voeding blijft aan; statuscontroles zijn gepauzeerd."
+      : "";
+  }
+}
+
 function renderConvert(data) {
   const converting = data.convert_state === "working";
   const source = currentSource();
@@ -213,13 +254,14 @@ function render(data) {
   $("library-folder").textContent = data.library_folder || "—";
   $("version").textContent = data.version ? `v${data.version}` : "";
   $("disc-visual").className = `disc-visual ${data.state === "ready" ? "ready" : ""} ${working ? "working" : ""}`;
+  renderDrive(data);
 
-  const ready = data.state === "ready";
+  const ready = data.state === "ready" && !data.drive_sleeping;
   $("copy-button").disabled = busy || working || !ready || data.copy_state === "done";
   $("iso-button").disabled = busy || working || !ready || data.image_force_available;
   $("iso-button").textContent = data.image_resumable && !data.image_force_available ? "ISO hervatten" : "ISO maken";
-  $("close-button").disabled = busy || working || !["empty", "open", "error"].includes(data.state);
-  $("eject-button").disabled = busy || working || !["ready", "empty", "open", "error"].includes(data.state);
+  $("close-button").disabled = busy || working || !["empty", "open", "error", "sleeping"].includes(data.state);
+  $("eject-button").disabled = busy || working || !["ready", "empty", "open", "error", "sleeping"].includes(data.state);
   $("retry-button").classList.toggle("hidden", data.state !== "error");
   $("retry-button").disabled = busy || working;
 
@@ -349,6 +391,45 @@ async function command(name, confirmation) {
   }
 }
 
+async function changeSpeed() {
+  const value = Number($("drive-speed").value);
+  speedChanging = true;
+  const feedback = $("drive-feedback");
+  feedback.className = "action-feedback";
+  feedback.textContent = "Draaisnelheid aanvragen…";
+  if (latest) renderDrive(latest);
+  try {
+    await post("/api/command", { command: "speed", speed: value }, "drive-feedback");
+    feedback.textContent = "Snelheidsverzoek ontvangen. De status wordt bijgewerkt.";
+  } catch (error) {
+    feedback.className = "action-feedback error";
+    feedback.textContent = error.message || "De snelheid is niet verzonden.";
+  } finally {
+    speedChanging = false;
+    speedDirty = false;
+    await refresh();
+  }
+}
+
+async function changeIdle() {
+  const value = Number($("sleep-idle").value);
+  idleChanging = true;
+  const feedback = $("drive-feedback");
+  feedback.className = "action-feedback";
+  feedback.textContent = "Slaaptimer opslaan…";
+  if (latest) renderDrive(latest);
+  try {
+    await post("/api/command", { command: "sleep_idle", seconds: value }, "drive-feedback");
+    feedback.textContent = value === 0 ? "Automatische slaapstand uit." : "Slaaptimer opgeslagen.";
+  } catch (error) {
+    feedback.className = "action-feedback error";
+    feedback.textContent = error.message || "De slaaptimer is niet opgeslagen.";
+  } finally {
+    idleChanging = false;
+    await refresh();
+  }
+}
+
 async function startConversion() {
   const source = currentSource();
   if (!source) return;
@@ -386,6 +467,13 @@ $("force-iso").addEventListener("click", () => command(
 $("close-button").addEventListener("click", () => command("close"));
 $("eject-button").addEventListener("click", () => command("eject", "De schijf eerst loskoppelen en daarna uitwerpen?"));
 $("retry-button").addEventListener("click", () => command("retry"));
+$("sleep-button").addEventListener("click", () => command(latest?.drive_sleeping ? "wake" : "sleep"));
+$("drive-speed").addEventListener("input", () => {
+  speedDirty = true;
+  $("drive-speed-label").textContent = speedLabel(Number($("drive-speed").value));
+});
+$("drive-speed").addEventListener("change", changeSpeed);
+$("sleep-idle").addEventListener("change", changeIdle);
 $("refresh-sources").addEventListener("click", refreshMedia);
 $("convert-source").addEventListener("change", () => { selectedSourceId = $("convert-source").value; renderTitles(); if (latest) renderConvert(latest); });
 $("convert-title").addEventListener("change", () => { if (latest) renderConvert(latest); });

@@ -11,6 +11,7 @@ Een Docker-container die een **usb-cd/dvd-speler op je Synology NAS** uitleest e
 - Live, alleen-lezen map: `/volume1/dvd/disc`.
 - Optioneel automatisch kopiëren naar `/volume1/dvd/library`.
 - Webdashboard met status, kopieerknop, ISO-knop, annuleerknoppen, lade sluiten en uitwerpen.
+- Slaapstand voor de usb-speler met handmatige knop en instelbare inactiviteitstimer, plus een slider om de draaisnelheid aan te vragen. Beide zijn best-effort: de usb-voeding blijft aan en niet elke speler/usb-brug ondersteunt de commando's.
 - ISO-bestanden die je in DSM File Station als virtuele schijf kunt aankoppelen.
 - Licht beschadigde ISO's worden toch opgeslagen; bij zware schade verschijnt **Toch doorgaan**. Een geannuleerde ISO kan later worden hervat.
 - **VIDEO_TS naar MP4**: kies een titel uit de dvd of een losse `.ts`/`.vob`/`.mpg`/`.mpeg` uit de NAS-bibliotheek. Overgeslagen bronnen krijgen een zichtbare reden en een waarschuwing in de containerlog.
@@ -187,6 +188,8 @@ Zie [docs/dockerhub.md](docs/dockerhub.md). Kort gezegd:
 | `CONVERT_CRF` | `20` | H.264-kwaliteit (1–51); lager = beter en groter |
 | `CONVERT_PRESET` | `veryfast` | `ultrafast` t/m `medium`; sneller = minder CPU, groter bestand |
 | `CONVERT_AUDIO_BITRATE` | `192` | AAC-kbps (64–512) |
+| `SLEEP_IDLE_SECONDS` | `600` | Automatische slaapstand na zoveel seconden zonder opdracht/activiteit; `0` = uit, anders 60–86400 |
+| `DRIVE_SPEED` | `0` | Draaisnelheid aanvragen: `0` = standaard/maximum, 1–24 Linux cdrom-eenheden (1× ≈ 177 kB/s) |
 | `IMAGE_NAME` | `ghcr.io/yuliankanters2011-tech/dvd` | Image-repository, bijvoorbeeld `docker.io/<user>/dvd-bridge` |
 | `IMAGE_TAG` | `latest` | Imagetag |
 
@@ -223,6 +226,20 @@ Versie **1.2.5** herstelt de celadrestabel (C_ADT) na de diagnose “De DVD-inde
 
 Versie **1.2.6** voegt de keuze “Alle ondersteunde titels in één MP4” toe bij **Titel**. De converter zet de ondersteunde titels achter elkaar in één MP4 en herkent een alles-afspelen-titel die dezelfde VOB-cellen hergebruikt, zodat afleveringen niet dubbel worden opgeslagen. Losse afleveringen, video/audio-modi, Films/Muziek, voortgang, annuleren en niet-overschrijven blijven werken. De marker vermeldt de opgenomen titelnummers. Werk bij naar **1.2.6** en klik **Bronnen verversen**; de bestaande import hoeft niet opnieuw gekopieerd.
 
+Versie **1.2.7** voegt **Slaapstand & draaisnelheid** toe: een handmatige slaap/wakker-knop, een instelbare automatische slaaptimer en een slider om de draaisnelheid van de usb-speler aan te vragen. Tijdens slaapstand pauzeert DVD Bridge de spelercontroles; de usb-voeding blijft aan en het stopcommando is best-effort. De bestaande import, ISO's en markers blijven ongewijzigd.
+
+## Slaapstand en draaisnelheid
+
+Het dashboardblok **Slaapstand & draaisnelheid** regelt de usb-speler zelf, niet de NAS of container:
+
+- **Slaapstand** koppelt de schijf eerst los en stuurt daarna het Linux `CDROMSTOP`-commando. De schijf hoort dan te stoppen met draaien, maar de usb-voeding blijft aan. Sommige spelers/usb-bruggen negeren het commando; DVD Bridge belooft daarom geen echte power-off.
+- **Automatisch slapen** gebeurt na de ingestelde tijd zonder opdrachten, conversies of schijfwissels. Standaard is dat 10 minuten (`SLEEP_IDLE_SECONDS=600`); `0` schakelt het uit. De keuze wordt bewaard in `dvd-state/drive-settings.json`.
+- Tijdens slaapstand worden status-, media- en mountcontroles van de speler gepauzeerd, zodat het dashboard de schijf niet elke paar seconden weer laat opstarten. **Wakker worden**, uitwerpen, lade sluiten of een opdracht op de live schijf hervat het gebruik. Conversies vanuit de NAS-bibliotheek kunnen gewoon doorgaan terwijl de speler slaapt.
+- De **slider** vraagt een draaisnelheid aan via `CDROM_SELECT_SPEED`: `0` is standaard/maximum, `1`–`24` zijn Linux cdrom-snelheidseenheden. Het echte toerental hangt af van de speler, usb-brug en schijf; dit is geen gemeten RPM en niet de FFmpeg-conversiesnelheid. Een niet-ondersteunde aanvraag geeft een waarschuwing zonder de rest van het dashboard te blokkeren.
+- Slaapstand en snelheidswerking worden geblokkeerd tijdens kopiëren, ISO-maken of omzetten. Annuleer eerst als je de speler wilt laten slapen.
+
+De container krijgt het apparaat nog steeds als `/dev/sr0:r` en gebruikt alleen read-only cdrom-ioctls. Er is geen `privileged`, host-USB-toegang of extra kernelmodule nodig. Echte usb-voeding uitschakelen kan vanuit deze container niet.
+
 ## Na een NAS-herstart
 
 De dedicated shared bind-mount kan na een reboot verdwijnen. Maak in DSM een taak:
@@ -255,6 +272,8 @@ sudo docker compose logs --tail=100 dvd
 | `wrong fs type` / `invalid argument` | Kernel mist `udf`, `isofs` of `nls_utf8`, of de schijf is geen gegevensschijf |
 | Uitwerpen mislukt | Er staan nog bestanden open; sluit ze of gebruik de fysieke knop |
 | Lade sluiten doet niets | Slimline/manual speler zonder motor; duw de lade voorzichtig dicht |
+| Speler blijft draaien in slaapstand | De speler/usb-brug negeert `CDROMSTOP`. DVD Bridge pauzeert wel zijn eigen controles; echte usb-voeding uitschakelen kan niet vanuit de container |
+| Snelheidsslider geeft waarschuwing | De speler/usb-brug ondersteunt `CDROM_SELECT_SPEED` niet, of de aanvraag mislukt. De rest van het dashboard blijft werken |
 | `FFmpeg ontbreekt` | Oude image; pull/build de nieuwe image met het `ffmpeg`-pakket |
 | `ddrescue-kaartbestand bevat ongeldige getallen` | Versie 1.2.0 of ouder; update naar 1.2.1 en klik **ISO hervatten** zonder het `.partial`-bestand of de mapfile te verwijderen |
 | Conversie meldt “bestaat al” | Er staat al een MP4 of marker; kies een andere naam of verplaats beide |

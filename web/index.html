@@ -69,6 +69,44 @@
       </div>
     </section>
 
+    <section class="drive-card" aria-labelledby="drive-title">
+      <div class="converter-heading">
+        <div>
+          <p class="eyebrow">USB-SPELER · BEST-EFFORT</p>
+          <h2 id="drive-title">Slaapstand &amp; draaisnelheid</h2>
+          <p>Laat de speler slapen na inactiviteit of vraag een lagere/hogere draaisnelheid aan.</p>
+        </div>
+        <span class="badge" id="drive-badge">Wakker</span>
+      </div>
+      <div class="drive-grid">
+        <div class="drive-control">
+          <button class="button primary" id="sleep-button" type="button">Slaapstand</button>
+          <label for="sleep-idle">Automatisch slapen na
+            <select id="sleep-idle">
+              <option value="0">Uit</option>
+              <option value="60">1 minuut</option>
+              <option value="300">5 minuten</option>
+              <option value="600">10 minuten</option>
+              <option value="900">15 minuten</option>
+              <option value="1800">30 minuten</option>
+              <option value="3600">1 uur</option>
+              <option value="7200">2 uur</option>
+              <option value="14400">4 uur</option>
+              <option value="86400">24 uur</option>
+            </select>
+          </label>
+        </div>
+        <div class="drive-control">
+          <label for="drive-speed">Draaisnelheid aanvragen
+            <input id="drive-speed" type="range" min="0" max="24" step="1" value="0" aria-describedby="drive-speed-label drive-help">
+          </label>
+          <output id="drive-speed-label" for="drive-speed">Standaard / maximum</output>
+        </div>
+      </div>
+      <p class="action-feedback" id="drive-feedback" aria-live="polite"></p>
+      <p class="converter-help" id="drive-help">Slaapstand koppelt de schijf los en stuurt een stopcommando; de usb-voeding blijft aan en sommige spelers negeren het commando. Tijdens slaapstand controleert DVD Bridge de speler niet meer, zodat hij niet meteen weer opstart. Wakker worden, uitwerpen, lade sluiten of een opdracht op de live schijf hervat het gebruik. De slider vraagt Linux cdrom-snelheidseenheden aan (0 = standaard/maximum, 1× ≈ 177 kB/s); het echte toerental hangt af van speler, usb-brug en schijf. Dit is niet de MP4-conversiesnelheid.</p>
+    </section>
+
     <section class="converter-card" aria-labelledby="converter-title">
       <div class="converter-heading">
         <div>
