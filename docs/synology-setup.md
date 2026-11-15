@@ -53,9 +53,9 @@ Open `http://<NAS-IP>:8085`. De containerpoort blijft 8080; alleen de NAS-poort 
 
 ## Updaten zonder Compose
 
-Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.3**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
+Een herstart alleen haalt geen nieuwe image op. Onderstaand blok werkt de bestaande `dvd-bridge`-container bij naar **1.2.4**, zonder Compose en met behoud van de `dvd-state`-volume, ISO's, markers en NAS-mappen. Hostpoort blijft **8085**. Het blok stopt en vervangt de container; voer het alleen uit als je die korte onderbreking wilt.
 
-Versie **1.2.3** herstelt de PGC-afspeelmodus die 1.2.2 op de verkeerde byte las, waardoor een complete VIDEO_TS-import soms geen omzetbare bronnen toonde. Overgeslagen bronnen krijgen nu een zichtbare reden en een waarschuwing in de log. De bestaande import hoeft niet opnieuw gekopieerd. Versie **1.2.1** herstelde al het uitlezen van GNU ddrescue-kaartbestanden; verwijder bij **ISO hervatten** nooit het verborgen `.partial`-bestand of de `.mapfile`.
+Versie **1.2.4** herstelt de DVD-tijdsduurparser: geldige PAL-tijden met framerate-bits `01` (25 fps) werden in 1.2.3 onterecht geweigerd met “De DVD-index bevat een ongeldige tijdsduur”. De bestaande import hoeft niet opnieuw gekopieerd. Kies na het updaten bij voorkeur de NAS-bibliotheekbron als de live schijf `I/O error` geeft. Versie **1.2.1** herstelde al het uitlezen van GNU ddrescue-kaartbestanden; verwijder bij **ISO hervatten** nooit het verborgen `.partial`-bestand of de `.mapfile`.
 
 Voer dit volledige blok uit via SSH:
 
@@ -97,7 +97,7 @@ printf '\n'
 sudo docker exec dvd-bridge python3 -c 'from app import __version__; print("DVD Bridge versie:", __version__)'
 ```
 
-Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.3` te staan.
+Open daarna het dashboard op poort **8085** en klik **Bronnen verversen**. Onderaan hoort `v1.2.4` te staan.
 
 ## Bestandssystemen
 
@@ -125,7 +125,7 @@ Ontbreekt `/dev/sr0`, dan is dit geen Docker-probleem dat de container kan oplos
 4. Kies **Video** en bestemming **Films**, of **Alleen geluid** en bestemming **Muziek**.
 5. Vul eventueel een eigen naam in en klik **Omzetten naar MP4**.
 
-Vanaf versie **1.2.3** blijven gewone titels met celcommando's en opeenvolgende multi-PGC-titels kiesbaar en wordt de PGC-afspeelmodus op de juiste schijfbyte gelezen. Alleen echte niet-sequentiële weergave (random/shuffle) krijgt de melding dat die titel niet wordt ondersteund. Een onleesbare enkele titel blokkeert andere leesbare titels niet meer. Zie je geen ondersteunde titels, klik dan **Bronnen verversen** en controleer onderaan dat de versie `v1.2.3` of nieuwer is.
+Vanaf versie **1.2.4** blijven gewone titels met celcommando's en opeenvolgende multi-PGC-titels kiesbaar, wordt de PGC-afspeelmodus op de juiste schijfbyte gelezen en worden DVD-tijden met 25 fps (`01`) of 29,97 fps (`11`) correct gedecodeerd. Alleen echte niet-sequentiële weergave (random/shuffle) krijgt de melding dat die titel niet wordt ondersteund. Een onleesbare enkele titel blokkeert andere leesbare titels niet meer. Zie je geen ondersteunde titels, klik dan **Bronnen verversen** en controleer onderaan dat de versie `v1.2.4` of nieuwer is.
 
 Als een complete import toch ontbreekt, toont het dashboard onder de bronkeuze de reden en het pad. Dezelfde informatie staat in `/api/media` onder `skipped_sources` en als waarschuwing in `sudo docker logs --tail=100 dvd-bridge`. Je hoeft niet opnieuw te kopiëren: update eerst de container en ververs de bronnen.
 

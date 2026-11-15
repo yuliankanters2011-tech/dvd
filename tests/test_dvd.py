@@ -363,3 +363,128 @@ def test_pgc_truncated_inside_ifo_is_rejected(tmp_path):
     source = dvd.inspect_source(directory)
     assert source.default_title == 0
     assert "afgebroken programmaketen" in source.titles[0].reason
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("00 46 17 60", 2777.8),
+        ("00 46 16 46", 2776.24),
+        ("00 46 07 40", 2767.0),
+        ("02 18 39 41", 8319.04),
+        ("00 15 53 59", 953.76),
+        ("00 00 24 40", 24.0),
+        ("00 00 14 40", 14.0),
+        ("00 00 09 56", 9.64),
+        ("00 00 22 61", 22.84),
+    ],
+)
+def test_knight_rider_pgc_times_use_25fps_rate_bits(raw, expected):
+    """Real NAS-import bytes: rate bits 01, frame count in the low six bits."""
+    assert dvd._bcd_time(bytes.fromhex(raw)) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("00 13 33 58", 813.72),
+        ("00 08 36 57", 516.68),
+        ("00 09 52 63", 592.92),
+        ("00 16 04 60", 964.8),
+        ("00 00 01 40", 1.0),
+    ],
+)
+def test_knight_rider_cell_times_use_25fps_rate_bits(raw, expected):
+    assert dvd._bcd_time(bytes.fromhex(raw)) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("00 00 00 c0", 0.0),
+        ("00 00 01 c0", 1.0),
+        ("00 00 00 e9", 29 * 1001 / 30000),
+        ("00 00 01 e9", 1 + 29 * 1001 / 30000),
+    ],
+)
+def test_ntsc_time_uses_rate_bits_11(raw, expected):
+    assert dvd._bcd_time(bytes.fromhex(raw)) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "00 00 00 65",  # 25 frames at 25 fps
+        "00 00 00 f0",  # 30 frames at 29.97 fps
+        "00 00 00 4a",  # non-BCD frame units
+        "00 60 00 40",  # 60 minutes
+        "00 00 60 40",  # 60 seconds
+        "0a 00 00 40",  # non-BCD hour units
+        "00 00 01 81",  # unknown rate bits with fractional frames
+        "00 00 00",  # truncated
+    ],
+)
+def test_invalid_dvd_time_is_rejected(raw):
+    with pytest.raises(dvd.DvdError, match="ongeldige tijdsduur"):
+        dvd._bcd_time(bytes.fromhex(raw))
+
+
+def test_invalid_dvd_time_error_contains_the_bytes():
+    with pytest.raises(dvd.DvdError, match="00 60 00 40"):
+        dvd._bcd_time(bytes.fromhex("00 60 00 40"))
+
+
+def test_zero_time_without_rate_bits_is_unambiguous():
+    assert dvd._bcd_time(bytes.fromhex("00 00 00 00")) == 0
+    assert dvd._bcd_time(bytes.fromhex("00 00 01 00")) == 1
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("00 46 17 60", 2777.8),
+        ("00 00 01 c0", 1.0),
+        ("00 00 00 e9", 29 * 1001 / 30000),
+    ],
+)
+def test_dvd_source_accepts_rate_bits_in_pgc_and_cell_times(tmp_path, raw, expected):
+    directory = write_dvd(tmp_path)
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    start = _first_pgc_offset(data)
+    time = bytes.fromhex(raw)
+    data[start + 4 : start + 8] = time
+    playback_offset = struct.unpack_from(">H", data, start + 0xE8)[0]
+    data[start + playback_offset + 4 : start + playback_offset + 8] = time
+    ifo.write_bytes(data)
+    source = dvd.inspect_source(directory)
+    assert source.default_title == 1
+    assert source.title(1).supported is True
+    assert source.title(1).duration == pytest.approx(expected)
+
+
+def test_knight_rider_like_titles_keep_longest_title_selectable(tmp_path):
+    directory = write_dvd(
+        tmp_path,
+        cells=[(1, number, (number - 1) * 2, number * 2 - 1, 0, 2) for number in range(1, 5)],
+        pgcs=[([number], 0) for number in range(4)],
+        titles=[(1, 1, 5), (2, 2, 5), (3, 3, 5), (4, 4, 13)],
+        vob_sectors={1: 8},
+    )
+    ifo = directory / "VTS_01_0.IFO"
+    data = bytearray(ifo.read_bytes())
+    pgcit = struct.unpack_from(">I", data, 0xCC)[0] * SECTOR
+    times = ["00 46 17 60", "00 46 16 46", "00 46 07 40", "02 18 39 41"]
+    for index, raw in enumerate(times):
+        start = pgcit + struct.unpack_from(">I", data, pgcit + 8 + index * 8 + 4)[0]
+        time = bytes.fromhex(raw)
+        data[start + 4 : start + 8] = time
+        playback_offset = struct.unpack_from(">H", data, start + 0xE8)[0]
+        data[start + playback_offset + 4 : start + playback_offset + 8] = time
+    ifo.write_bytes(data)
+    source = dvd.inspect_source(directory, label="KNIGHT_RIDER")
+    assert source.summary()["title_count"] == 4
+    assert all(title.supported for title in source.titles)
+    assert source.default_title == 4
+    assert source.title(1).duration == pytest.approx(2777.8)
+    assert source.title(4).duration == pytest.approx(8319.04)

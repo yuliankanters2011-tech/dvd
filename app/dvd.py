@@ -128,14 +128,36 @@ def _ifo(directory: Path, stem: str, magic: bytes) -> bytes:
 
 
 def _bcd_time(value: bytes) -> float:
-    if len(value) != 4 or any((byte >> 4) > 9 or (byte & 15) > 9 for byte in value[:3]):
-        raise DvdError("De DVD-index bevat een ongeldige tijdsduur")
+    """Decode DVD dvd_time_t: BCD h/m/s, then 2 rate bits + BCD frames.
+
+    libdvdread prints rate bits 01 as 25 fps and 11 as 29.97 fps. The frame
+    count is only the low six bits (two BCD digits), never the whole byte.
+    """
+    if (
+        len(value) != 4
+        or any((byte >> 4) > 9 or (byte & 15) > 9 for byte in value[:3])
+        or (value[3] & 15) > 9
+    ):
+        raise DvdError(f"De DVD-index bevat een ongeldige tijdsduur ({value.hex(' ')})")
     hours, minutes, seconds = ((byte >> 4) * 10 + (byte & 15) for byte in value[:3])
     frame_u = value[3]
-    frames = (frame_u >> 4) * 10 + (frame_u & 15)
-    fps = 30000 / 1001 if frame_u & 0xC0 == 0xC0 else 25
-    if minutes > 59 or seconds > 59 or frames >= int(fps + 0.5):
-        raise DvdError("De DVD-index bevat een ongeldige tijdsduur")
+    frames = ((frame_u >> 4) & 3) * 10 + (frame_u & 15)
+    rate = frame_u >> 6
+    if rate == 3:
+        fps = 30000 / 1001
+        max_frames = 30
+    elif rate == 1:
+        fps = 25.0
+        max_frames = 25
+    elif frames == 0:
+        # Some authoring tools leave the rate bits zero when there are no
+        # fractional frames. The whole-second duration is still unambiguous.
+        fps = 25.0
+        max_frames = 25
+    else:
+        raise DvdError(f"De DVD-index bevat een ongeldige tijdsduur ({value.hex(' ')})")
+    if minutes > 59 or seconds > 59 or frames >= max_frames:
+        raise DvdError(f"De DVD-index bevat een ongeldige tijdsduur ({value.hex(' ')})")
     return hours * 3600 + minutes * 60 + seconds + frames / fps
 
 

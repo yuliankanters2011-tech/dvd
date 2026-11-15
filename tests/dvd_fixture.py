@@ -8,15 +8,20 @@ from pathlib import Path
 SECTOR = 2048
 
 
-def bcd(seconds: int) -> bytes:
+def bcd(seconds: int, frames: int = 0, *, ntsc: bool = False) -> bytes:
+    """Encode dvd_time_t with explicit rate bits (01=25 fps, 11=29.97 fps)."""
+    limit = 30 if ntsc else 25
+    if not 0 <= frames < limit:
+        raise ValueError(f"fixture frames must be 0..{limit - 1}")
     hours, rest = divmod(seconds, 3600)
     minutes, secs = divmod(rest, 60)
+    frame_u = (0xC0 if ntsc else 0x40) | ((frames // 10) << 4) | (frames % 10)
     return bytes(
         (
             (hours // 10) << 4 | hours % 10,
             (minutes // 10) << 4 | minutes % 10,
             (secs // 10) << 4 | secs % 10,
-            0,
+            frame_u,
         )
     )
 
